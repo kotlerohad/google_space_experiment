@@ -45,7 +45,9 @@ const EmailList = ({ onMessageLog, config }) => {
 
   const fetchEmails = async () => {
     if (!config?.gmailApiKey) {
-      setError('Please configure your Gmail API access token.');
+      const errorMsg = 'Please configure your Gmail API access token.';
+      setError(errorMsg);
+      onMessageLog?.(errorMsg, 'error');
       return;
     }
 
@@ -59,9 +61,14 @@ const EmailList = ({ onMessageLog, config }) => {
       const fetchedEmails = await emailService.fetchEmails(50);
       setEmails(fetchedEmails);
       onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
+      if (fetchedEmails.length === 0) {
+        onMessageLog?.('No emails were returned from the API. Please check your Gmail account.', 'warning');
+      }
     } catch (err) {
-      setError(err.message);
-      onMessageLog?.(err.message, 'error');
+      const errorMsg = `Failed to fetch emails: ${err.message}`;
+      setError(errorMsg);
+      onMessageLog?.(errorMsg, 'error');
+      console.error(err); // Also log the full error to the console
     } finally {
       setIsLoading(false);
     }

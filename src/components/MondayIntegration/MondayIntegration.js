@@ -27,7 +27,9 @@ const MondayIntegration = ({ onMessageLog, config }) => {
 
   const loadBoards = useCallback(async () => {
     if (!config?.mondayApiToken) {
-      setError('Please configure your Monday.com API token.');
+      const errorMsg = 'Please configure your Monday.com API token.';
+      setError(errorMsg);
+      onMessageLog?.(errorMsg, 'error');
       return;
     }
 
@@ -39,6 +41,9 @@ const MondayIntegration = ({ onMessageLog, config }) => {
       const boardsData = await mondayService.getBoards();
       setBoards(boardsData);
       onMessageLog?.(`Loaded ${boardsData.length} boards from Monday.com`, 'success');
+      if (boardsData.length === 0) {
+        onMessageLog?.('No boards were returned from the API. Please check your Monday.com account and API key permissions.', 'warning');
+      }
       
       if (config.mondayBoardId) {
         const configuredBoard = boardsData.find(board => board.id === config.mondayBoardId);
@@ -48,8 +53,10 @@ const MondayIntegration = ({ onMessageLog, config }) => {
         }
       }
     } catch (err) {
-      setError(err.message);
-      onMessageLog?.(err.message, 'error');
+      const errorMsg = `Failed to load boards: ${err.message}`;
+      setError(errorMsg);
+      onMessageLog?.(errorMsg, 'error');
+      console.error(err);
     } finally {
       setIsLoading(false);
     }

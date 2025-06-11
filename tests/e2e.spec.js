@@ -71,8 +71,8 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
     // The prompt editor content is hidden by default
     await expect(page.locator('.p-4 > .space-y-6')).not.toBeVisible();
     
-    // Click to expand the prompt editor
-    await page.locator('button:has-text("Expand")').click();
+    // Click to expand the prompt editor, targeting the one in the footer
+    await page.locator('.app-footer button:has-text("Expand")').click();
     await expect(page.locator('.p-4 > .space-y-6')).toBeVisible();
     
     // Check for the two text areas
@@ -80,7 +80,7 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
     await expect(page.locator('textarea').nth(1)).toBeVisible();
 
     // Click to collapse it again
-    await page.locator('button:has-text("Collapse")').click();
+    await page.locator('.app-footer button:has-text("Collapse")').click();
     await expect(page.locator('.p-4 > .space-y-6')).not.toBeVisible();
   });
 }); 
