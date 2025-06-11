@@ -1,6 +1,15 @@
 class GeminiService {
   constructor() {
     this.apiKey = '';
+    this.stats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      averageResponseTime: 0,
+      totalTokensUsed: 0,
+      lastRequestTime: null,
+      responseTimes: []
+    };
   }
 
   setApiKey(apiKey) {
@@ -38,6 +47,10 @@ class GeminiService {
       metadata: { apiUrl, model: 'gemini-2.0-flash' }
     });
 
+    const startTime = Date.now();
+    this.stats.totalRequests++;
+    this.stats.lastRequestTime = new Date();
+
     try {
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -69,6 +82,13 @@ class GeminiService {
               response: parsedResponse,
               metadata: { responseType: 'JSON', rawText: text.length > 200 ? text.substring(0, 200) + '...' : text }
             });
+            
+            // Update success stats
+            this.stats.successfulRequests++;
+            const responseTime = Date.now() - startTime;
+            this.stats.responseTimes.push(responseTime);
+            this.stats.averageResponseTime = this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length;
+            
             return parsedResponse;
           } catch (parseError) {
             throw new Error(`AI did not return valid JSON. Output: ${text}`);
@@ -82,6 +102,12 @@ class GeminiService {
           metadata: { responseType: 'text', fullLength: text.length }
         });
         
+        // Update success stats
+        this.stats.successfulRequests++;
+        const responseTime = Date.now() - startTime;
+        this.stats.responseTimes.push(responseTime);
+        this.stats.averageResponseTime = this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length;
+        
         return text;
       } else if (result.error) {
         throw new Error(`Gemini API error: ${result.error.message} (Code: ${result.error.code})`);
@@ -90,6 +116,9 @@ class GeminiService {
       }
     } catch (error) {
       console.error("Gemini API call failed:", error);
+      // Update error stats
+      this.stats.failedRequests++;
+      
       // Log the error
       this.emitLLMEvent('error', {
         service: 'Gemini',
@@ -286,6 +315,22 @@ ${email.body}`;
     } catch (error) {
       return { success: false, error: error.message };
     }
+  }
+
+  getStats() {
+    return { ...this.stats };
+  }
+
+  resetStats() {
+    this.stats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      averageResponseTime: 0,
+      totalTokensUsed: 0,
+      lastRequestTime: null,
+      responseTimes: []
+    };
   }
 }
 

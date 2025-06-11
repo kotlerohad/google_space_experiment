@@ -9,7 +9,7 @@ import supabaseService from './services/supabaseService';
 import emailService from './services/emailService';
 import geminiService from './services/geminiService';
 import { Toaster } from 'sonner';
-import PromptEditor from './components/PromptEditor';
+import PromptEditor from './components/shared/PromptEditor';
 
 const AppContent = () => {
   const { config, isConfigLoaded } = useContext(AppContext);
