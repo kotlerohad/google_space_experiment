@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useEffect, useContext } from 'react';
 import './App.css';
 import EmailPane from './components/EmailPane';
 import TriagePane from './components/TriagePane';

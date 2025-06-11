@@ -1,9 +1,7 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import { Cog } from 'lucide-react';
-import { AppContext } from '../../AppContext';
 import geminiService from '../../services/geminiService';
 import emailService from '../../services/emailService';
-import supabaseService from '../../services/supabaseService';
 import mondayService from '../../services/mondayService';
 
 const ApiConfig = ({ onConfigChange }) => {

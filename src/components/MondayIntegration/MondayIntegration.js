@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import mondayService from '../../services/mondayService';
 
 const MondayIntegration = ({ onMessageLog, config }) => {
@@ -8,45 +8,7 @@ const MondayIntegration = ({ onMessageLog, config }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (config?.mondayApiToken) {
-      mondayService.setApiToken(config.mondayApiToken);
-      loadBoards();
-    }
-  }, [config?.mondayApiToken]);
-
-  const loadBoards = async () => {
-    if (!config?.mondayApiToken) {
-      setError('Please configure your Monday.com API token.');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      onMessageLog?.('Loading Monday.com boards...', 'info');
-      const boardsData = await mondayService.getBoards();
-      setBoards(boardsData);
-      onMessageLog?.(`Loaded ${boardsData.length} boards from Monday.com`, 'success');
-      
-      // Auto-select the configured board if available
-      if (config.mondayBoardId) {
-        const configuredBoard = boardsData.find(board => board.id === config.mondayBoardId);
-        if (configuredBoard) {
-          setSelectedBoard(configuredBoard);
-          loadBoardItems(configuredBoard.id);
-        }
-      }
-    } catch (err) {
-      setError(err.message);
-      onMessageLog?.(err.message, 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadBoardItems = async (boardId) => {
+  const loadBoardItems = useCallback(async (boardId) => {
     setIsLoading(true);
     setError(null);
 
@@ -61,7 +23,44 @@ const MondayIntegration = ({ onMessageLog, config }) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [onMessageLog]);
+
+  const loadBoards = useCallback(async () => {
+    if (!config?.mondayApiToken) {
+      setError('Please configure your Monday.com API token.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      onMessageLog?.('Loading Monday.com boards...', 'info');
+      const boardsData = await mondayService.getBoards();
+      setBoards(boardsData);
+      onMessageLog?.(`Loaded ${boardsData.length} boards from Monday.com`, 'success');
+      
+      if (config.mondayBoardId) {
+        const configuredBoard = boardsData.find(board => board.id === config.mondayBoardId);
+        if (configuredBoard) {
+          setSelectedBoard(configuredBoard);
+          loadBoardItems(configuredBoard.id);
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+      onMessageLog?.(err.message, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [config?.mondayApiToken, config.mondayBoardId, onMessageLog, loadBoardItems]);
+
+  useEffect(() => {
+    if (config?.mondayApiToken) {
+      mondayService.setApiToken(config.mondayApiToken);
+      loadBoards();
+    }
+  }, [config?.mondayApiToken, loadBoards]);
 
   const handleBoardSelect = (board) => {
     setSelectedBoard(board);
