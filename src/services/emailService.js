@@ -12,7 +12,7 @@ class EmailService {
       authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
       tokenURL: 'https://oauth2.googleapis.com/token',
       scope: 'https://www.googleapis.com/auth/gmail.readonly',
-      redirectUri: `${window.location.origin}/oauth-callback.html`
+      redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth-callback.html` : ''
     };
   }
 
@@ -21,18 +21,6 @@ class EmailService {
     this.clientSecret = clientSecret;
     this.isOAuthConfigured = !!(clientId && clientSecret);
     console.log('📧 Gmail OAuth configured:', this.isOAuthConfigured);
-  }
-
-  setAccessToken(token) {
-    this.accessToken = token;
-    // Set expiry to 1 hour from now if not specified
-    this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
-    console.log('📧 Gmail access token set');
-  }
-
-  setRefreshToken(token) {
-    this.refreshToken = token;
-    console.log('📧 Gmail refresh token set');
   }
 
   // Generate OAuth authorization URL
@@ -51,6 +39,41 @@ class EmailService {
     });
 
     return `${this.oauthConfig.authURL}?${params.toString()}`;
+  }
+
+  getCodeFromUrl(url) {
+    try {
+      const urlObject = new URL(url);
+      const code = urlObject.searchParams.get('code');
+      if (!code) {
+        throw new Error('Authorization code not found in the URL.');
+      }
+      return code;
+    } catch (error) {
+      throw new Error('Invalid URL provided.');
+    }
+  }
+
+  async getTokens(code) {
+    if (!this.isOAuthConfigured) {
+      throw new Error('OAuth not configured. Please set client ID and secret.');
+    }
+    const response = await fetch(this.oauthConfig.tokenURL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: this.oauthConfig.redirectUri,
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Token exchange failed: ${errorData}`);
+    }
+    return response.json();
   }
 
   // Exchange authorization code for tokens
@@ -403,7 +426,18 @@ class EmailService {
       throw error;
     }
   }
+
+  async getProfile() {
+    await this.ensureValidToken();
+    const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
+      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch Gmail profile');
+    }
+    return await response.json();
+  }
 }
 
-const emailServiceInstance = new EmailService();
-export default emailServiceInstance; 
+const emailService = new EmailService();
+module.exports = emailService; 

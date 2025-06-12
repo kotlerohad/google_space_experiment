@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
 class SupabaseService {
   constructor() {
@@ -72,7 +72,34 @@ class SupabaseService {
   getArtifacts = () => this.getAll('artifacts');
   createArtifact = (artifactData) => this.create('artifacts', artifactData);
   updateArtifact = (id, updates) => this.update('artifacts', id, updates);
+
+  // --- Prompts ---
+
+  async getPrompt(name) {
+    if (!this.client) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.client
+      .from('prompts')
+      .select('content')
+      .eq('name', name)
+      .single();
+
+    if (error && error.code !== 'PGRST116') { // Ignore 'not found' errors
+      throw error;
+    }
+    return data ? data.content : null;
+  }
+
+  async savePrompt(name, content) {
+    if (!this.client) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.client
+      .from('prompts')
+      .upsert({ name, content }, { onConflict: 'name' })
+      .select();
+      
+    if (error) throw error;
+    return data;
+  }
 }
 
 const supabaseService = new SupabaseService();
-export default supabaseService; 
+module.exports = supabaseService; 

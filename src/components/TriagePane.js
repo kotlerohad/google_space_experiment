@@ -1,20 +1,20 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useCallback } from 'react';
 import { AppContext } from '../AppContext';
-import MondayIntegration from './MondayIntegration/MondayIntegration';
+import SupabaseIntegration from './MondayIntegration/SupabaseIntegration';
 
 const TriagePane = () => {
   const { config } = useContext(AppContext);
   const [messages, setMessages] = useState([]);
 
-  const handleMessageLog = (message, type = 'info') => {
+  const handleMessageLog = useCallback((message, type = 'info') => {
     const newMessage = {
-      id: Date.now(),
+      id: `${Date.now()}-${Math.random()}`,
       text: message,
       type: type,
       timestamp: new Date().toLocaleTimeString()
     };
     setMessages(prev => [newMessage, ...prev.slice(0, 49)]); // Keep last 50 messages
-  };
+  }, []);
 
   return (
     <div className="triage-pane">
@@ -29,7 +29,7 @@ const TriagePane = () => {
         </div>
         
         <div className="p-6">
-          <MondayIntegration onMessageLog={handleMessageLog} config={config} />
+          <SupabaseIntegration onMessageLog={handleMessageLog} config={config} />
         </div>
       </div>
 

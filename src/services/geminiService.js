@@ -129,6 +129,10 @@ class GeminiService {
     }
   }
 
+  async generateText(prompt) {
+    return this.makeRequest(prompt);
+  }
+
   // Email Triage specific methods
   async triageEmail(email, triageLogic) {
     const prompt = `${triageLogic}\n\n--- EMAIL CONTENT ---\nFrom: ${email.from}\nSubject: ${email.subject}\n\n${email.body}`;
@@ -318,7 +322,7 @@ ${email.body}`;
   }
 
   getStats() {
-    return { ...this.stats };
+    return this.stats;
   }
 
   resetStats() {
@@ -334,5 +338,5 @@ ${email.body}`;
   }
 }
 
-const geminiServiceInstance = new GeminiService();
-export default geminiServiceInstance; 
+const geminiService = new GeminiService();
+module.exports = geminiService; 

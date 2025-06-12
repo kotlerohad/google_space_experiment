@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
+import { AppContext } from '../../AppContext';
 import { EditIcon, CheckIcon, RefreshIcon } from './Icons';
-import firebaseService from '../../services/firebaseService';
+import supabaseService from '../../services/supabaseService';
 
 const defaultPrompts = {
   triageLogic: `You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`,
@@ -13,6 +14,7 @@ Relevant Monday.com Boards and their common columns (for AI reference):
 };
 
 const PromptEditor = ({ onMessageLog, className = "" }) => {
+  const { isConfigLoaded } = useContext(AppContext);
   const [prompts, setPrompts] = useState({
     triageLogic: defaultPrompts.triageLogic,
     mondayContext: defaultPrompts.mondayContext
@@ -23,23 +25,24 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const loadPrompts = useCallback(async () => {
+    if (!isConfigLoaded) return;
     try {
       setIsLoading(true);
       
-      const triageLogic = await firebaseService.getTriageLogic();
-      const mondayConfig = await firebaseService.getMondayConfig();
+      const triageLogic = await supabaseService.getPrompt('triageLogic');
+      const mondayContext = await supabaseService.getPrompt('mondayContext');
       
       setPrompts(prev => ({
         ...prev,
         triageLogic: triageLogic || defaultPrompts.triageLogic,
-        mondayContext: mondayConfig?.contextPrompt || defaultPrompts.mondayContext
+        mondayContext: mondayContext || defaultPrompts.mondayContext
       }));
     } catch (error) {
       console.error('Error loading prompts:', error);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isConfigLoaded]);
 
   useEffect(() => {
     loadPrompts();
@@ -64,18 +67,8 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
     try {
       setIsLoading(true);
       
-      if (promptType === 'triageLogic') {
-        await firebaseService.saveTriageLogic(tempValue);
-        onMessageLog?.('Email triage prompt saved successfully.', 'success');
-      } else if (promptType === 'mondayContext') {
-        // Save as part of Monday config
-        const existingConfig = await firebaseService.getMondayConfig() || {};
-        await firebaseService.saveMondayConfig({
-          ...existingConfig,
-          contextPrompt: tempValue
-        });
-        onMessageLog?.('Monday.com context prompt saved successfully.', 'success');
-      }
+      await supabaseService.savePrompt(promptType, tempValue);
+      onMessageLog?.(`${promptType.replace(/([A-Z])/g, ' $1')} prompt saved successfully.`, 'success');
       
       setPrompts(prev => ({ ...prev, [promptType]: tempValue }));
       setEditingPrompt(null);
@@ -92,15 +85,7 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
       try {
         setIsLoading(true);
         
-        if (promptType === 'triageLogic') {
-          await firebaseService.saveTriageLogic(defaultPrompts[promptType]);
-        } else if (promptType === 'mondayContext') {
-          const existingConfig = await firebaseService.getMondayConfig() || {};
-          await firebaseService.saveMondayConfig({
-            ...existingConfig,
-            contextPrompt: defaultPrompts[promptType]
-          });
-        }
+        await supabaseService.savePrompt(promptType, defaultPrompts[promptType]);
         
         setPrompts(prev => ({ ...prev, [promptType]: defaultPrompts[promptType] }));
         onMessageLog?.(`${promptType} prompt reset to default.`, 'success');
@@ -215,7 +200,7 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
           <div className="mt-6 pt-4 border-t border-gray-200">
             <p className="text-xs text-gray-500">
               <strong>Note:</strong> Prompt changes take effect immediately for new AI requests. 
-              Changes are automatically saved to your Firebase backend.
+              Changes are automatically saved to your Supabase backend.
             </p>
           </div>
         </div>

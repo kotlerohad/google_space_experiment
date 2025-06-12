@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon } from '../shared/Icons';
 import TriageResult from './TriageResult';
 import emailService from '../../services/emailService';
 import geminiService from '../../services/geminiService';
-import firebaseService from '../../services/firebaseService';
+import supabaseService from '../../services/supabaseService';
 
 const EmailList = ({ onMessageLog, config }) => {
   const [emails, setEmails] = useState([]);
@@ -12,52 +12,45 @@ const EmailList = ({ onMessageLog, config }) => {
   const [triageResults, setTriageResults] = useState({});
   const [triageLogic, setTriageLogic] = useState(`You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`);
 
-  useEffect(() => {
-    loadTriageLogic();
-    
-    // Subscribe to triage results from Firebase
-    const unsubscribe = firebaseService.subscribeToTriageResults((results, memory) => {
-      setTriageResults(results);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const loadTriageLogic = async () => {
+  const loadTriageLogic = useCallback(async () => {
     try {
-      const logic = await firebaseService.getTriageLogic();
+      const logic = await supabaseService.getPrompt('triageLogic');
       if (logic) {
         setTriageLogic(logic);
       }
     } catch (error) {
       console.error('Error loading triage logic:', error);
     }
+  }, []);
+
+  useEffect(() => {
+    loadTriageLogic();
+  }, [loadTriageLogic]);
+
+  const saveTriageResult = async (emailId, resultData) => {
+    try {
+      await supabaseService.create('triage_results', { id: emailId, ...resultData });
+    } catch (error) {
+      // It might fail if the record already exists, we can ignore this for now
+      console.warn(`Could not save triage result for ${emailId}:`, error.message);
+    }
   };
 
-  const saveTriageLogic = async () => {
+  const updateTriageResult = async (emailId, updates) => {
     try {
-      await firebaseService.saveTriageLogic(triageLogic);
-      onMessageLog?.('Triage logic saved successfully.', 'success');
+      await supabaseService.update('triage_results', emailId, updates);
     } catch (error) {
-      onMessageLog?.('Failed to save triage logic.', 'error');
+      console.error(`Could not update triage result for ${emailId}:`, error.message);
     }
   };
 
   const fetchEmails = async () => {
-    if (!config?.gmailApiKey) {
-      const errorMsg = 'Please configure your Gmail API access token.';
-      setError(errorMsg);
-      onMessageLog?.(errorMsg, 'error');
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
     setEmails([]);
 
     try {
       onMessageLog?.('Fetching emails from Gmail...', 'info');
-      emailService.setAccessToken(config.gmailApiKey);
       const fetchedEmails = await emailService.fetchEmails(50);
       setEmails(fetchedEmails);
       onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
@@ -97,10 +90,9 @@ const EmailList = ({ onMessageLog, config }) => {
         timestamp: new Date()
       };
 
-      // Save to Firebase/localStorage
-      await firebaseService.saveTriageResult(email.id, resultData);
+      // Save to Supabase
+      await saveTriageResult(email.id, resultData);
       
-      // IMPORTANT: Update local state immediately for demo mode
       setTriageResults(prev => ({ ...prev, [email.id]: resultData }));
       
       onMessageLog?.(`Triage completed for "${email.subject}"`, 'success');
@@ -151,9 +143,8 @@ const EmailList = ({ onMessageLog, config }) => {
         updates.feedback_text = feedbackText;
       }
 
-      await firebaseService.updateTriageResult(emailId, updates);
+      await updateTriageResult(emailId, updates);
       
-      // IMPORTANT: Update local state immediately for demo mode
       setTriageResults(prev => ({ 
         ...prev, 
         [emailId]: { ...prev[emailId], ...updates }
@@ -234,8 +225,8 @@ const EmailList = ({ onMessageLog, config }) => {
           </div>
           <button
             onClick={fetchEmails}
-            disabled={isLoading || !config?.gmailApiKey}
-            className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-blue-300"
+            disabled={isLoading || !emailService.getOAuthStatus().hasAccessToken}
+            className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             <RefreshIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             {isLoading ? 'Fetching...' : 'Fetch Emails'}
@@ -411,10 +402,10 @@ const EmailList = ({ onMessageLog, config }) => {
           className="w-full h-32 p-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none transition"
         />
         <button
-          onClick={saveTriageLogic}
+          onClick={loadTriageLogic}
           className="w-full mt-4 bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700"
         >
-          Save Triage Logic
+          Reload Triage Logic
         </button>
       </div>
     </div>

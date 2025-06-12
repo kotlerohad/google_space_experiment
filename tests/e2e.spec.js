@@ -73,7 +73,13 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
     
     // Click to expand the prompt editor, targeting the one in the footer
     await page.locator('.app-footer button:has-text("Expand")').click();
+    
+    // Wait for the content to be visible before proceeding
     await expect(page.locator('.p-4 > .space-y-6')).toBeVisible();
+
+    // Click both "Edit" buttons to reveal the textareas
+    await page.locator('button[title="Edit"]').first().click();
+    await page.locator('button[title="Edit"]').last().click();
     
     // Check for the two text areas
     await expect(page.locator('textarea').nth(0)).toBeVisible();

@@ -54,42 +54,6 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const { setConfig } = useContext(AppContext);
-
-  useEffect(() => {
-    // Load config from localStorage or .env
-    const loadedConfig = {
-      geminiApiKey: localStorage.getItem('geminiApiKey') || process.env.REACT_APP_GEMINI_API_KEY,
-      googleClientId: localStorage.getItem('googleClientId') || process.env.REACT_APP_GOOGLE_CLIENT_ID,
-      googleClientSecret: localStorage.getItem('googleClientSecret') || process.env.REACT_APP_GOOGLE_CLIENT_SECRET,
-      supabaseUrl: localStorage.getItem('supabaseUrl') || process.env.REACT_APP_SUPABASE_URL,
-      supabaseKey: localStorage.getItem('supabaseKey') || process.env.REACT_APP_SUPABASE_ANON_KEY,
-      useFirebase: process.env.REACT_APP_USE_FIREBASE === 'true',
-      firebaseConfig: {
-        apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-        authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-        projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-        storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-        appId: process.env.REACT_APP_FIREBASE_APP_ID
-      },
-      demoMode: !process.env.REACT_APP_GEMINI_API_KEY, // Basic demo mode check
-    };
-    setConfig(loadedConfig);
-    
-    // Initialize services
-    if (loadedConfig.geminiApiKey) {
-      geminiService.setApiKey(loadedConfig.geminiApiKey);
-    }
-    if (loadedConfig.googleClientId && loadedConfig.googleClientSecret) {
-      emailService.setClientCredentials(loadedConfig.googleClientId, loadedConfig.googleClientSecret);
-    }
-    if (loadedConfig.supabaseUrl && loadedConfig.supabaseKey) {
-        supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
-    }
-    
-  }, [setConfig]);
-
   return (
     <div className="app-container">
       <AppContent />
