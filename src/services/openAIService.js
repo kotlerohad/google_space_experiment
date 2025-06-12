@@ -160,11 +160,36 @@ DATABASE SCHEMA:
 Here is the database schema you are working with:
 ${this.dbSchema}
 
+### Operation Format
+Each operation object must have these exact fields:
+- "action": "insert", "update", or "delete" (lowercase)
+- "table": the table name (e.g., "companies", "contacts", "activities")
+- "payload": object with the data to insert/update
+- "where": object with conditions (required for update/delete operations)
+
+### Example Operations:
+{
+  "operations": [
+    {
+      "action": "insert",
+      "table": "companies", 
+      "payload": {"name": "TechCorp", "company_type_name": "Fintech"}
+    },
+    {
+      "action": "update",
+      "table": "contacts",
+      "payload": {"title": "Senior Developer"},
+      "where": {"id": 1}
+    }
+  ]
+}
+
 ### Instructions for AI
 - Generate operations for MULTIPLE tables if the user's request requires it.
 - For lookups (e.g., finding a company_type_id for "Investor"), use a special "_name" suffix for the field (e.g., "company_type_name": "Investor"). The backend will handle the ID lookup.
-- For "UPDATE" or "DELETE", you must provide a "where" clause in the payload.
-- Always return an array of operation objects. If no operations can be determined, return an empty array.`;
+- For "UPDATE" or "DELETE", you must provide a "where" clause.
+- Always return an array of operation objects. If no operations can be determined, return an empty array.
+- Use "action" not "operation" as the field name.`;
 
     const payload = {
       model: this.model,

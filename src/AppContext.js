@@ -58,7 +58,11 @@ export const AppProvider = ({ children }) => {
 
       // Initialize services with the loaded config
       if (loadedConfig.openaiApiKey) {
+        console.log('🔧 AppContext - Setting OpenAI API key:', loadedConfig.openaiApiKey ? 'Key present' : 'Key missing');
         openAIService.setApiKey(loadedConfig.openaiApiKey);
+      } else {
+        console.warn('🔧 AppContext - OpenAI API key not found in environment variables');
+        toast.warning('OpenAI API key not configured. AI features will not be available.');
       }
       if (loadedConfig.googleClientId && loadedConfig.googleClientSecret) {
         emailService.setOAuthConfig(loadedConfig.googleClientId, loadedConfig.googleClientSecret);

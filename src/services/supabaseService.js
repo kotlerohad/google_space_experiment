@@ -198,7 +198,11 @@ class SupabaseService {
     if (!operations || operations.length === 0) return;
 
     for (const op of operations) {
-      const { action, table, payload, where } = op;
+      // Handle both 'action' and 'operation' field names for backward compatibility
+      const action = op.action || op.operation;
+      const table = op.table;
+      const payload = op.payload || op.data; // Handle both 'payload' and 'data'
+      const where = op.where;
       
       // Validate required fields
       if (!action || typeof action !== 'string') {
