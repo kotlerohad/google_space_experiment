@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useRef } from 'react';
 import supabaseService from './services/supabaseService';
 import emailService from './services/emailService';
 import geminiService from './services/geminiService';
@@ -17,8 +17,12 @@ export const AppProvider = ({ children }) => {
     demoMode: false,
   });
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
+  const servicesInitialized = useRef(false);
 
   useEffect(() => {
+    // Prevent re-initialization on re-renders
+    if (servicesInitialized.current) return;
+
     // Load config from localStorage and environment variables
     const loadedConfig = {
       geminiApiKey: localStorage.getItem('geminiApiKey') || process.env.REACT_APP_GEMINI_API_KEY,
@@ -43,7 +47,8 @@ export const AppProvider = ({ children }) => {
     if (loadedConfig.supabaseUrl && loadedConfig.supabaseKey) {
         supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
     }
-
+    
+    servicesInitialized.current = true;
   }, []);
 
   const updateConfig = (newConfig) => {

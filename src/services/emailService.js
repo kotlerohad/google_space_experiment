@@ -12,7 +12,7 @@ class EmailService {
       authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
       tokenURL: 'https://oauth2.googleapis.com/token',
       scope: 'https://www.googleapis.com/auth/gmail.readonly',
-      redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth-callback.html` : ''
+      redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth-callback.html` : 'http://localhost/oauth-callback.html'
     };
   }
 
@@ -155,11 +155,17 @@ class EmailService {
       this.accessToken = tokens.access_token;
       this.tokenExpiry = new Date(Date.now() + (tokens.expires_in * 1000));
 
-      // Update stored tokens
-      const stored = JSON.parse(localStorage.getItem('gmail_tokens') || '{}');
-      stored.accessToken = this.accessToken;
-      stored.tokenExpiry = this.tokenExpiry.toISOString();
-      localStorage.setItem('gmail_tokens', JSON.stringify(stored));
+      // Update stored tokens, but only if in a browser context
+      if (typeof localStorage !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem('gmail_tokens') || '{}');
+        stored.accessToken = this.accessToken;
+        stored.tokenExpiry = this.tokenExpiry.toISOString();
+        // Also update refresh token if a new one was issued
+        if (tokens.refresh_token) {
+            stored.refreshToken = tokens.refresh_token;
+        }
+        localStorage.setItem('gmail_tokens', JSON.stringify(stored));
+      }
 
       console.log('📧 Access token refreshed successfully');
       return tokens;
@@ -277,17 +283,45 @@ class EmailService {
   getOAuthStatus() {
     return {
       isConfigured: this.isOAuthConfigured,
-      hasAccessToken: !!this.accessToken,
+      hasAccessToken: !!this.accessToken && !this.needsTokenRefresh(),
       hasRefreshToken: !!this.refreshToken,
-      tokenExpiry: this.tokenExpiry,
-      needsRefresh: this.needsTokenRefresh()
+    };
+  }
+
+  // --- Main API Methods ---
+
+  parseEmailMessage(message) {
+    const { id, snippet, payload } = message;
+    const headers = payload.headers;
+    
+    const fromHeader = headers.find(h => h.name === 'From');
+    const subjectHeader = headers.find(h => h.name === 'Subject');
+    const dateHeader = headers.find(h => h.name === 'Date');
+
+    let body = '';
+    if (payload.parts) {
+      const part = payload.parts.find(p => p.mimeType === 'text/plain');
+      if (part && part.body && part.body.data) {
+        body = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      }
+    } else if (payload.body && payload.body.data) {
+      body = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+    }
+
+    return {
+      id: id,
+      from: fromHeader ? fromHeader.value : 'Unknown Sender',
+      subject: subjectHeader ? subjectHeader.value : 'No Subject',
+      snippet: snippet || '',
+      body: body,
+      date: dateHeader ? new Date(dateHeader.value) : new Date(),
+      raw: message, // Keep raw message for debugging or advanced use
     };
   }
 
   async fetchEmails(maxResults = 10) {
     try {
-      // Ensure we have a valid token
-      await this.ensureValidToken();
+      const token = await this.ensureValidToken();
 
       const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`;
       

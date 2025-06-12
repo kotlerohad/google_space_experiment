@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
+import { AppContext } from '../../AppContext';
 import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon } from '../shared/Icons';
 import TriageResult from './TriageResult';
 import emailService from '../../services/emailService';
@@ -6,6 +7,7 @@ import geminiService from '../../services/geminiService';
 import supabaseService from '../../services/supabaseService';
 
 const EmailList = ({ onMessageLog, config }) => {
+  const { isConfigLoaded } = useContext(AppContext);
   const [emails, setEmails] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -13,15 +15,18 @@ const EmailList = ({ onMessageLog, config }) => {
   const [triageLogic, setTriageLogic] = useState(`You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`);
 
   const loadTriageLogic = useCallback(async () => {
+    if (!isConfigLoaded) return;
     try {
       const logic = await supabaseService.getPrompt('triageLogic');
       if (logic) {
         setTriageLogic(logic);
       }
     } catch (error) {
-      console.error('Error loading triage logic:', error);
+      const errorMsg = error.message || JSON.stringify(error);
+      console.error('Error loading triage logic:', errorMsg);
+      onMessageLog?.(`Failed to load triage logic: ${errorMsg}`, 'error');
     }
-  }, []);
+  }, [isConfigLoaded, onMessageLog]);
 
   useEffect(() => {
     loadTriageLogic();

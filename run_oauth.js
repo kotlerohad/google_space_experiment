@@ -19,6 +19,10 @@ async function runOAuthProcess() {
     }
 
     emailService.setOAuthConfig(clientId, clientSecret);
+    
+    // DEBUG: Print the exact redirect URI being used.
+    console.log(`\n[DEBUG] Using redirect URI: "${emailService.oauthConfig.redirectUri}"\n`);
+    
     const authUrl = emailService.generateAuthURL();
     
     console.log('\n✅ Step 1: Authorize the application');

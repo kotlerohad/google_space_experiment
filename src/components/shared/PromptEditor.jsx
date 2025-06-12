@@ -38,11 +38,13 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
         mondayContext: mondayContext || defaultPrompts.mondayContext
       }));
     } catch (error) {
-      console.error('Error loading prompts:', error);
+      const errorMsg = error.message || JSON.stringify(error);
+      console.error('Error loading prompts:', errorMsg);
+      onMessageLog?.(`Failed to load prompts: ${errorMsg}`, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [isConfigLoaded]);
+  }, [isConfigLoaded, onMessageLog]);
 
   useEffect(() => {
     loadPrompts();

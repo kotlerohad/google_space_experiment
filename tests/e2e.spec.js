@@ -2,10 +2,11 @@ const { test, expect } = require('@playwright/test');
 
 test.describe('AI Productivity Assistant E2E Tests', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the app before each test
+    // Navigate to the app before each test.
+    // The storageState is loaded automatically, so we're already logged in.
     await page.goto('http://localhost:3000');
-    // Wait for the main content to be loaded
-    await page.waitForSelector('.app-main', { timeout: 15000 });
+    // Wait for the main content to be loaded and for the "Fetch Emails" button to be enabled.
+    await expect(page.getByRole('button', { name: 'Fetch Emails' })).toBeEnabled({ timeout: 15000 });
   });
 
   test('should display the main layout and components', async ({ page }) => {
@@ -23,7 +24,7 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
 
   test('should fetch and display emails', async ({ page }) => {
     // Click the "Fetch Emails" button
-    await page.click('button:has-text("Fetch Emails")');
+    await page.getByRole('button', { name: 'Fetch Emails' }).click();
 
     // Wait for the email list to appear and check for at least one email
     await page.waitForSelector('tr.hover\\:bg-gray-50');
@@ -36,11 +37,11 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
 
   test('should perform triage on a single email', async ({ page }) => {
     // First, fetch emails
-    await page.click('button:has-text("Fetch Emails")');
+    await page.getByRole('button', { name: 'Fetch Emails' }).click();
     await page.waitForSelector('tr.hover\\:bg-gray-50');
 
     // Click the first "Triage" button
-    await page.locator('button:has-text("Triage")').first().click();
+    await page.getByRole('button', { name: 'Triage' }).first().click();
 
     // Wait for the triage result to appear
     await page.waitForSelector('td[colspan="6"]');
@@ -53,6 +54,22 @@ test.describe('AI Productivity Assistant E2E Tests', () => {
 
   test('should interact with Monday.com integration', async ({ page }) => {
     // Wait for the Monday.com boards to load
+    await page.waitForSelector('button.p-3.rounded-lg.border');
+    
+    // Check that at least one board is listed
+    const boardItems = await page.locator('button.p-3.rounded-lg.border').count();
+    expect(boardItems).toBeGreaterThan(0);
+
+    // Click on the first board
+    await page.locator('button.p-3.rounded-lg.border').first().click();
+    
+    // Check if board items are loaded
+    await page.waitForSelector('.space-y-2.max-h-60');
+    await expect(page.locator('.space-y-2.max-h-60')).toBeVisible();
+  });
+
+  test('should interact with the Supabase integration', async ({ page }) => {
+    // Wait for the company data to load
     await page.waitForSelector('button.p-3.rounded-lg.border');
     
     // Check that at least one board is listed

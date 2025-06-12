@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
+import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
 
 const SupabaseIntegration = ({ onMessageLog, config }) => {
+  const { isConfigLoaded } = useContext(AppContext);
   const [companies, setCompanies] = useState([]);
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [companyContacts, setCompanyContacts] = useState([]);
@@ -25,6 +27,7 @@ const SupabaseIntegration = ({ onMessageLog, config }) => {
   }, [onMessageLog]);
 
   const loadCompanies = useCallback(async () => {
+    if (!isConfigLoaded) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -40,7 +43,7 @@ const SupabaseIntegration = ({ onMessageLog, config }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [onMessageLog]);
+  }, [onMessageLog, isConfigLoaded]);
 
   useEffect(() => {
     loadCompanies();
