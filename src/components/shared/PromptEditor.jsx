@@ -4,7 +4,15 @@ import { EditIcon, CheckIcon, RefreshIcon } from './Icons';
 import supabaseService from '../../services/supabaseService';
 
 const defaultPrompts = {
-  triageLogic: `You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`,
+  triageLogic: `You are an expert email triage assistant. Your goal is to process an email and return a structured JSON object.
+
+The JSON object must have the following properties:
+- "summary": (string) A concise, one-sentence summary of the email's content.
+- "key_point": (string) The single most important takeaway. Must be one of the following values: "Schedule", "Respond", "Update_Database", "Archive", "Review".
+- "confidence": (number) Your confidence in the triage result, from 1 to 10.
+- "suggested_draft": (string | null) If a response is needed, a suggested draft email. Otherwise, null.
+
+Based on the email content, provide the JSON object. For scheduling-related emails, always suggest checking the calendar in your summary or draft. For "welcome" emails or basic notifications, the key_point should be "Archive" with a confidence of 9 or higher.`,
   mondayContext: `
 Relevant Monday.com Boards and their common columns (for AI reference):
 - Companies Board: Key columns: Company Name, Industry.
@@ -47,8 +55,10 @@ const PromptEditor = ({ onMessageLog, className = "" }) => {
   }, [isConfigLoaded, onMessageLog]);
 
   useEffect(() => {
-    loadPrompts();
-  }, [loadPrompts]);
+    if (isConfigLoaded) {
+      loadPrompts();
+    }
+  }, [isConfigLoaded, loadPrompts]);
 
   const startEditing = (promptType) => {
     setEditingPrompt(promptType);

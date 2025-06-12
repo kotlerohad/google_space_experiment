@@ -1,4 +1,5 @@
-import React, { createContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useState, useEffect, useRef, useCallback } from 'react';
+import { toast } from 'sonner';
 import supabaseService from './services/supabaseService';
 import emailService from './services/emailService';
 import geminiService from './services/geminiService';
@@ -19,36 +20,58 @@ export const AppProvider = ({ children }) => {
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
   const servicesInitialized = useRef(false);
 
+  // Load config and initialize services
   useEffect(() => {
-    // Prevent re-initialization on re-renders
     if (servicesInitialized.current) return;
 
-    // Load config from localStorage and environment variables
-    const loadedConfig = {
-      geminiApiKey: localStorage.getItem('geminiApiKey') || process.env.REACT_APP_GEMINI_API_KEY,
-      googleClientId: localStorage.getItem('googleClientId') || process.env.REACT_APP_GMAIL_CLIENT_ID,
-      googleClientSecret: localStorage.getItem('googleClientSecret') || process.env.REACT_APP_GMAIL_CLIENT_SECRET,
-      supabaseUrl: localStorage.getItem('supabaseUrl') || process.env.REACT_APP_SUPABASE_URL,
-      supabaseKey: localStorage.getItem('supabaseKey') || process.env.REACT_APP_SUPABASE_ANON_KEY,
-      demoMode: !process.env.REACT_APP_GEMINI_API_KEY,
-    };
-    
-    setConfig(loadedConfig);
-    setIsConfigLoaded(true);
+    try {
+      const loadedConfig = {
+        geminiApiKey: localStorage.getItem('geminiApiKey') || process.env.REACT_APP_GEMINI_API_KEY || '',
+        googleClientId: localStorage.getItem('googleClientId') || process.env.REACT_APP_GMAIL_CLIENT_ID || '',
+        googleClientSecret: localStorage.getItem('googleClientSecret') || process.env.REACT_APP_GMAIL_CLIENT_SECRET || '',
+        supabaseUrl: localStorage.getItem('supabaseUrl') || process.env.REACT_APP_SUPABASE_URL || '',
+        supabaseKey: localStorage.getItem('supabaseKey') || process.env.REACT_APP_SUPABASE_ANON_KEY || '',
+        demoMode: !process.env.REACT_APP_GEMINI_API_KEY,
+      };
+      
+      setConfig(loadedConfig);
 
-    // Initialize services
-    if (loadedConfig.geminiApiKey) {
-      geminiService.setApiKey(loadedConfig.geminiApiKey);
-    }
-    if (loadedConfig.googleClientId && loadedConfig.googleClientSecret) {
-      emailService.setOAuthConfig(loadedConfig.googleClientId, loadedConfig.googleClientSecret);
-      emailService.loadStoredTokens();
-    }
-    if (loadedConfig.supabaseUrl && loadedConfig.supabaseKey) {
+      // Initialize services with the loaded config
+      if (loadedConfig.geminiApiKey) {
+        geminiService.setApiKey(loadedConfig.geminiApiKey);
+      }
+      if (loadedConfig.googleClientId && loadedConfig.googleClientSecret) {
+        emailService.setOAuthConfig(loadedConfig.googleClientId, loadedConfig.googleClientSecret);
+        emailService.loadStoredTokens();
+      }
+      if (loadedConfig.supabaseUrl && loadedConfig.supabaseKey) {
         supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
+      }
+      
+      servicesInitialized.current = true;
+    } catch (error) {
+      console.error("Failed to initialize app:", error);
+      toast.error('A critical error occurred during app initialization.');
+    } finally {
+      setIsConfigLoaded(true); // Signal that config loading is complete
     }
-    
-    servicesInitialized.current = true;
+  }, []);
+
+  const onMessageLog = useCallback((message, type = 'info') => {
+    switch (type) {
+      case 'success':
+        toast.success(message);
+        break;
+      case 'error':
+        toast.error(message);
+        break;
+      case 'warning':
+        toast.warning(message);
+        break;
+      default:
+        toast.info(message);
+        break;
+    }
   }, []);
 
   const updateConfig = (newConfig) => {
@@ -66,7 +89,8 @@ export const AppProvider = ({ children }) => {
     <AppContext.Provider value={{
       config,
       setConfig: updateConfig,
-      isConfigLoaded
+      isConfigLoaded,
+      onMessageLog,
     }}>
       {children}
     </AppContext.Provider>

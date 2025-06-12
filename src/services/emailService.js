@@ -11,7 +11,11 @@ class EmailService {
     this.oauthConfig = {
       authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
       tokenURL: 'https://oauth2.googleapis.com/token',
-      scope: 'https://www.googleapis.com/auth/gmail.readonly',
+      scope: [
+        'https://www.googleapis.com/auth/gmail.modify', // Read, write, modify emails, but not delete
+        'https://www.googleapis.com/auth/gmail.compose', // Create and send drafts
+        'https://www.googleapis.com/auth/calendar.readonly' // Read access to calendars
+      ].join(' '),
       redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth-callback.html` : 'http://localhost/oauth-callback.html'
     };
   }
@@ -275,161 +279,195 @@ class EmailService {
     this.accessToken = null;
     this.refreshToken = null;
     this.tokenExpiry = null;
-    localStorage.removeItem('gmail_tokens');
-    console.log('📧 Gmail tokens cleared');
+    // Clear from localStorage as well
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('gmail_tokens');
+    }
+    console.log('📧 All Gmail tokens cleared');
   }
 
   // Check OAuth status
   getOAuthStatus() {
+    const hasAccessToken = !!this.accessToken && new Date() < this.tokenExpiry;
+    // Check if the scope for calendar access was granted
+    const hasCalendarAccess = this.oauthConfig.scope.includes('calendar');
+
     return {
       isConfigured: this.isOAuthConfigured,
-      hasAccessToken: !!this.accessToken && !this.needsTokenRefresh(),
-      hasRefreshToken: !!this.refreshToken,
+      hasAccessToken,
+      hasCalendarAccess,
+      needsReauth: this.isOAuthConfigured && !this.refreshToken
     };
   }
 
   // --- Main API Methods ---
 
   parseEmailMessage(message) {
-    const { id, snippet, payload } = message;
-    const headers = payload.headers;
-    
-    const fromHeader = headers.find(h => h.name === 'From');
-    const subjectHeader = headers.find(h => h.name === 'Subject');
-    const dateHeader = headers.find(h => h.name === 'Date');
+    if (!message || !message.payload) {
+      console.warn('Skipping malformed message object:', message);
+      return null;
+    }
+
+    const headers = message.payload.headers || [];
+    const getHeader = (name) => {
+      const header = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+      return header ? header.value : '';
+    };
 
     let body = '';
-    if (payload.parts) {
-      const part = payload.parts.find(p => p.mimeType === 'text/plain');
-      if (part && part.body && part.body.data) {
+    if (message.payload.parts) {
+      const part = message.payload.parts.find(p => p.mimeType === 'text/plain') || message.payload.parts[0];
+       if (part && part.body && part.body.data) {
         body = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
       }
-    } else if (payload.body && payload.body.data) {
-      body = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+    } else if (message.payload.body && message.payload.body.data) {
+      body = atob(message.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
     }
 
     return {
-      id: id,
-      from: fromHeader ? fromHeader.value : 'Unknown Sender',
-      subject: subjectHeader ? subjectHeader.value : 'No Subject',
-      snippet: snippet || '',
-      body: body,
-      date: dateHeader ? new Date(dateHeader.value) : new Date(),
-      raw: message, // Keep raw message for debugging or advanced use
+      id: message.id,
+      threadId: message.threadId,
+      from: getHeader('From'),
+      subject: getHeader('Subject'),
+      date: getHeader('Date'),
+      snippet: message.snippet,
+      body: body.substring(0, 2000), // Truncate for performance
     };
   }
 
-  async fetchEmails(maxResults = 10) {
-    try {
-      const token = await this.ensureValidToken();
+  async fetchEmails(maxResults = 20) {
+    await this.ensureValidToken();
 
-      const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`;
-      
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      });
+    // 1. Get list of message IDs
+    const listResponse = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=-is:draft`, {
+      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+    });
+    if (!listResponse.ok) throw new Error('Failed to fetch email list.');
+    const listData = await listResponse.json();
+    if (!listData.messages || listData.messages.length === 0) return [];
 
-      if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Gmail API error: ${response.status} - ${errorData}`);
-      }
+    // 2. Create a batch request to get details for all messages
+    const boundary = 'batch_boundary';
+    let batchRequestBody = '';
+    listData.messages.forEach(msg => {
+      batchRequestBody += `--${boundary}\n`;
+      batchRequestBody += `Content-Type: application/http\n\n`;
+      batchRequestBody += `GET /gmail/v1/users/me/messages/${msg.id}?format=full\n\n`;
+    });
+    batchRequestBody += `--${boundary}--`;
 
-      const data = await response.json();
-      
-      if (!data.messages) {
-        return [];
-      }
+    // 3. Execute the batch request
+    const batchResponse = await fetch('https://www.googleapis.com/batch/gmail/v1', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': `multipart/mixed; boundary=${boundary}`
+      },
+      body: batchRequestBody
+    });
+    if (!batchResponse.ok) throw new Error('Batch email fetch failed.');
 
-      // Fetch detailed information for each message
-      const emailPromises = data.messages.slice(0, maxResults).map(async (message) => {
-        const detailResponse = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'Content-Type': 'application/json'
-            }
+    // 4. Parse the multipart batch response
+    const responseText = await batchResponse.text();
+    const parts = responseText.split('--batch_');
+    const emails = parts
+      .filter(part => part.includes('Content-Type: application/json'))
+      .map(part => {
+        const jsonStart = part.indexOf('{');
+        const jsonEnd = part.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          try {
+            const jsonString = part.substring(jsonStart, jsonEnd + 1);
+            const message = JSON.parse(jsonString);
+            return this.parseEmailMessage(message);
+          } catch (e) {
+            console.error('Failed to parse message from batch response:', e);
+            return null;
           }
-        );
-
-        if (!detailResponse.ok) {
-          console.error(`Failed to fetch message ${message.id}`);
-          return null;
         }
+        return null;
+      })
+      .filter(Boolean); // Filter out any nulls from parsing errors
 
-        const messageData = await detailResponse.json();
-        return this.parseEmailMessage(messageData);
-      });
-
-      const emails = await Promise.all(emailPromises);
-      return emails.filter(email => email !== null);
-
-    } catch (error) {
-      console.error('Error fetching emails:', error);
-      throw error;
-    }
+    return emails;
   }
 
   async archiveEmail(emailId) {
-    if (!this.accessToken) {
-      throw new Error('Gmail access token is required');
+    await this.ensureValidToken();
+    const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${emailId}/modify`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ removeLabelIds: ['INBOX'] })
+    });
+    if (!response.ok) {
+      throw new Error('Failed to archive email.');
+    }
+    return response.json();
+  }
+
+  async createDraft(to, subject, body) {
+    await this.ensureValidToken();
+    const message = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      'MIME-Version: 1.0',
+      '',
+      body
+    ].join('\n');
+
+    const base64EncodedMessage = btoa(unescape(encodeURIComponent(message)));
+
+    const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/drafts`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message: { raw: base64EncodedMessage } })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Draft creation failed:', errorData);
+      throw new Error(`Failed to create draft. API responded with: ${JSON.stringify(errorData.error.message)}`);
     }
 
-    try {
-      const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${emailId}/modify`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          removeLabelIds: ['INBOX']
-        })
-      });
+    return response.json();
+  }
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Gmail API error: ${errorData.error.message}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error archiving email:', error);
-      throw error;
+  async testCalendarConnection() {
+    await this.ensureValidToken();
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=5&orderBy=startTime&singleEvents=true', {
+      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch calendar events.');
     }
+    const data = await response.json();
+    return data.items || [];
   }
 
   async markAsSpam(emailId) {
-    if (!this.accessToken) {
-      throw new Error('Gmail access token is required');
+    await this.ensureValidToken();
+    const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${emailId}/modify`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        addLabelIds: ['SPAM'],
+        removeLabelIds: ['INBOX']
+      })
+    });
+    if (!response.ok) {
+      throw new Error('Failed to mark email as spam.');
     }
-
-    try {
-      const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${emailId}/modify`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          addLabelIds: ['SPAM'],
-          removeLabelIds: ['INBOX']
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Gmail API error: ${errorData.error.message}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error marking as spam:', error);
-      throw error;
-    }
+    return response.json();
   }
 
   async markAsImportant(emailId) {
@@ -461,17 +499,20 @@ class EmailService {
     }
   }
 
-  async getProfile() {
-    await this.ensureValidToken();
-    const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
-      headers: { 'Authorization': `Bearer ${this.accessToken}` }
-    });
-    if (!response.ok) {
-      throw new Error('Failed to fetch Gmail profile');
+  async testConnection() {
+    try {
+      await this.ensureValidToken();
+      const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/profile`, {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      });
+      if (!response.ok) throw new Error('Failed to fetch profile.');
+      return await response.json();
+    } catch (error) {
+      console.error('Gmail connection test failed:', error);
+      throw error;
     }
-    return await response.json();
   }
 }
 
 const emailService = new EmailService();
-module.exports = emailService; 
+export default emailService; 

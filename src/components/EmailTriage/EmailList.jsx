@@ -29,8 +29,10 @@ const EmailList = ({ onMessageLog, config }) => {
   }, [isConfigLoaded, onMessageLog]);
 
   useEffect(() => {
-    loadTriageLogic();
-  }, [loadTriageLogic]);
+    if (isConfigLoaded) {
+      loadTriageLogic();
+    }
+  }, [isConfigLoaded, loadTriageLogic]);
 
   const saveTriageResult = async (emailId, resultData) => {
     try {
@@ -102,6 +104,17 @@ const EmailList = ({ onMessageLog, config }) => {
       
       onMessageLog?.(`Triage completed for "${email.subject}"`, 'success');
 
+      // Auto-archive logic
+      if (result.key_point === 'Archive' && result.confidence >= 9) {
+        onMessageLog?.(`High confidence "Archive" suggestion. Auto-archiving email...`, 'info');
+        await handleEmailAction(email.id, 'archive');
+        // Mark as archived in the UI state as well
+        setTriageResults(prev => ({
+          ...prev,
+          [email.id]: { ...prev[email.id], autoArchived: true }
+        }));
+      }
+
     } catch (error) {
       console.error("Triage failed:", error);
       const errorResult = { error: error.message, isLoading: false };
@@ -110,7 +123,7 @@ const EmailList = ({ onMessageLog, config }) => {
     }
   };
 
-  const handleEmailAction = async (emailId, action) => {
+  const handleEmailAction = async (emailId, action, data) => {
     try {
       onMessageLog?.(`Executing ${action} on email...`, 'info');
       
@@ -126,6 +139,13 @@ const EmailList = ({ onMessageLog, config }) => {
         case 'important':
           await emailService.markAsImportant(emailId);
           onMessageLog?.('Email marked as important.', 'success');
+          break;
+        case 'create_draft':
+          if (!data || !data.to || !data.subject || !data.body) {
+            throw new Error('Missing data for creating a draft.');
+          }
+          await emailService.createDraft(data.to, data.subject, data.body);
+          onMessageLog?.(`Draft created for: ${data.subject}`, 'success');
           break;
         default:
           throw new Error(`Unknown action: ${action}`);
@@ -323,6 +343,10 @@ const EmailList = ({ onMessageLog, config }) => {
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                               Error
                             </span>
+                          ) : triageResults[email.id]?.autoArchived ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              ✓ Auto-Archived
+                            </span>
                           ) : triageResults[email.id]?.summary ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                               ✓ Triaged
@@ -393,25 +417,6 @@ const EmailList = ({ onMessageLog, config }) => {
             <p className="text-gray-400 text-sm">Fetching your recent emails from Gmail</p>
           </div>
         )}
-      </div>
-
-      {/* Triage Logic Editor */}
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <h3 className="text-lg font-semibold mb-4 text-gray-700">Triage Logic</h3>
-        <p className="text-gray-600 mb-4 text-sm">
-          This is the high-level instruction for the AI. You can manually edit it, but the best way to improve the AI is by providing feedback on individual emails.
-        </p>
-        <textarea
-          value={triageLogic}
-          onChange={(e) => setTriageLogic(e.target.value)}
-          className="w-full h-32 p-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none transition"
-        />
-        <button
-          onClick={loadTriageLogic}
-          className="w-full mt-4 bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700"
-        >
-          Reload Triage Logic
-        </button>
       </div>
     </div>
   );

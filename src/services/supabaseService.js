@@ -1,52 +1,72 @@
-const { createClient } = require('@supabase/supabase-js');
+import { createClient } from '@supabase/supabase-js';
 
 class SupabaseService {
   constructor() {
-    this.client = null;
+    this.supabaseUrl = null;
+    this.supabaseKey = null;
+    this.supabase = null;
+  }
+
+  isConnected() {
+    return !!this.supabase;
   }
 
   initialize(supabaseUrl, supabaseKey) {
     if (!supabaseUrl || !supabaseKey) {
-      console.error("Supabase URL and Key are required for initialization.");
+      console.warn("Supabase URL or Key is missing. Supabase client not initialized.");
       return;
     }
-    this.client = createClient(supabaseUrl, supabaseKey);
+    this.supabaseUrl = supabaseUrl;
+    this.supabaseKey = supabaseKey;
+    this.supabase = createClient(supabaseUrl, supabaseKey);
     console.log("Supabase client initialized.");
+  }
+
+  async testConnection() {
+    try {
+      // A simple query to test the connection
+      const { data, error } = await this.supabase.from('companies').select('id').limit(1);
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Supabase connection test failed:', error);
+      throw error;
+    }
   }
 
   // --- Generic Helper Methods ---
   
   async getAll(tableName) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client.from(tableName).select('*');
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase.from(tableName).select('*');
     if (error) throw error;
     return data;
   }
 
   async getById(tableName, id) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client.from(tableName).select('*').eq('id', id).single();
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase.from(tableName).select('*').eq('id', id).single();
     if (error) throw error;
     return data;
   }
 
   async create(tableName, record) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client.from(tableName).insert([record]).select();
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase.from(tableName).insert([record]).select();
     if (error) throw error;
     return data;
   }
 
   async update(tableName, id, updates) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client.from(tableName).update(updates).eq('id', id).select();
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase.from(tableName).update(updates).eq('id', id).select();
     if (error) throw error;
     return data;
   }
 
   async delete(tableName, id) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { error } = await this.client.from(tableName).delete().eq('id', id);
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { error } = await this.supabase.from(tableName).delete().eq('id', id);
     if (error) throw error;
     return true;
   }
@@ -76,8 +96,8 @@ class SupabaseService {
   // --- Prompts ---
 
   async getPrompt(name) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase
       .from('prompts')
       .select('content')
       .eq('name', name)
@@ -90,8 +110,8 @@ class SupabaseService {
   }
 
   async savePrompt(name, content) {
-    if (!this.client) throw new Error("Supabase client not initialized");
-    const { data, error } = await this.client
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    const { data, error } = await this.supabase
       .from('prompts')
       .upsert({ name, content }, { onConflict: 'name' })
       .select();
@@ -99,7 +119,13 @@ class SupabaseService {
     if (error) throw error;
     return data;
   }
+
+  async getPrompts() {
+    const { data, error } = await this.supabase.from('prompts').select('*');
+    if (error) throw error;
+    return data;
+  }
 }
 
 const supabaseService = new SupabaseService();
-module.exports = supabaseService; 
+export default supabaseService; 

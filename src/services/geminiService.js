@@ -60,71 +60,48 @@ class GeminiService {
 
       if (!response.ok) {
         const errorText = await response.text();
+        this.stats.failedRequests++;
+        this.emitLLMEvent('error', { service: 'Gemini', error: `API Error: ${response.status}`, metadata: { responseText: errorText } });
         throw new Error(`Gemini API call failed with HTTP status ${response.status}. Response: ${errorText}`);
       }
 
       const result = await response.json();
+      const responseTime = Date.now() - startTime;
 
-      if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
-        
-        let text = result.candidates[0].content.parts[0].text;
-        
-        if (schema) {
-          // Clean up markdown code block wrappers
-          text = text.replace(/^```json\n/, '').replace(/\n```$/, '');
-          try {
-            const parsedResponse = JSON.parse(text);
-            // Log successful response
-            this.emitLLMEvent('response', {
-              service: 'Gemini',
-              response: parsedResponse,
-              metadata: { responseType: 'JSON', rawText: text.length > 200 ? text.substring(0, 200) + '...' : text }
-            });
-            
-            // Update success stats
-            this.stats.successfulRequests++;
-            const responseTime = Date.now() - startTime;
-            this.stats.responseTimes.push(responseTime);
-            this.stats.averageResponseTime = this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length;
-            
-            return parsedResponse;
-          } catch (parseError) {
-            throw new Error(`AI did not return valid JSON. Output: ${text}`);
-          }
-        }
-        
-        // Log successful text response
-        this.emitLLMEvent('response', {
-          service: 'Gemini',
-          response: text.length > 500 ? text.substring(0, 500) + '...' : text,
-          metadata: { responseType: 'text', fullLength: text.length }
-        });
-        
-        // Update success stats
-        this.stats.successfulRequests++;
-        const responseTime = Date.now() - startTime;
-        this.stats.responseTimes.push(responseTime);
-        this.stats.averageResponseTime = this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length;
-        
-        return text;
-      } else if (result.error) {
-        throw new Error(`Gemini API error: ${result.error.message} (Code: ${result.error.code})`);
-      } else {
-        throw new Error('Gemini API did not return a valid response.');
+      if (!result.candidates || result.candidates.length === 0) {
+        throw new Error('Gemini API did not return any candidates.');
       }
-    } catch (error) {
-      console.error("Gemini API call failed:", error);
-      // Update error stats
-      this.stats.failedRequests++;
       
-      // Log the error
-      this.emitLLMEvent('error', {
-        service: 'Gemini',
-        error: error.message,
-        metadata: { originalPrompt: prompt.substring(0, 100) + '...' }
-      });
+      const candidate = result.candidates[0];
+      const text = candidate.content?.parts[0]?.text;
+
+      if (!text) {
+        throw new Error('Gemini API response is missing text content.');
+      }
+
+      this.stats.successfulRequests++;
+      this.stats.responseTimes.push(responseTime);
+      this.stats.averageResponseTime = this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length;
+
+      // If a schema is expected, always try to parse as JSON.
+      if (schema) {
+        try {
+          const cleanedText = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+          const parsedResponse = JSON.parse(cleanedText);
+          this.emitLLMEvent('response', { service: 'Gemini', response: parsedResponse, metadata: { responseType: 'JSON' } });
+          return parsedResponse;
+        } catch (parseError) {
+          this.emitLLMEvent('error', { service: 'Gemini', error: 'JSON Parse Error', metadata: { rawText: text } });
+          throw new Error(`AI did not return valid JSON. Output: ${text}`);
+        }
+      }
+      
+      // Otherwise, return plain text.
+      this.emitLLMEvent('response', { service: 'Gemini', response: text, metadata: { responseType: 'text' } });
+      return text;
+    } catch (error) {
+      this.stats.failedRequests++;
+      this.emitLLMEvent('error', { service: 'Gemini', error: error.message });
       throw error;
     }
   }
@@ -140,22 +117,15 @@ class GeminiService {
     const schema = {
       type: "OBJECT",
       properties: {
-        "category": { "type": "STRING" },
-        "summary": { "type": "STRING" },
-        "actions": {
-          "type": "OBJECT",
-          "properties": {
-            "Gmail": { "type": "ARRAY", "items": { "type": "STRING" } },
-            "Monday.com": { "type": "ARRAY", "items": { "type": "STRING" } },
-            "Calendar": { "type": "ARRAY", "items": { "type": "STRING" } },
-            "Human": { "type": "ARRAY", "items": { "type": "STRING" } }
-          }
-        }
+        summary: { type: "STRING" },
+        key_point: { type: "STRING" },
+        confidence: { type: "NUMBER" },
+        suggested_draft: { type: "STRING" },
       },
-      required: ["category", "summary", "actions"]
+      required: ["summary", "key_point", "confidence"]
     };
 
-    return await this.makeRequest(prompt, schema);
+    return this.makeRequest(prompt, schema);
   }
 
   // Monday.com Integration specific methods

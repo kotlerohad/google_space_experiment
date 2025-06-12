@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { CheckIcon, BrainIcon, MailIcon, CalendarIcon, UserIcon, PlayIcon } from '../shared/Icons';
+import { CheckIcon, BrainIcon, MailIcon, CalendarIcon, UserIcon, PlayIcon, SparklesIcon } from '../shared/Icons';
 
 const TriageResult = ({ email, result, onFeedback, onEmailAction, onMessageLog, compact = false }) => {
   const [writtenFeedback, setWrittenFeedback] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isDrafting, setIsDrafting] = useState(false);
 
   const handleGoodFeedback = async () => {
     await onFeedback(email.id, email, result, 'good');
@@ -76,6 +76,22 @@ const TriageResult = ({ email, result, onFeedback, onEmailAction, onMessageLog, 
     }
   };
 
+  const handleCreateDraft = async () => {
+    setIsDrafting(true);
+    try {
+      const subject = `Re: ${email.subject}`;
+      await onEmailAction(email.id, 'create_draft', {
+        to: email.from,
+        subject: subject,
+        body: result.suggested_draft
+      });
+    } catch (error) {
+      onMessageLog?.(`Failed to create draft: ${error.message}`, 'error');
+    } finally {
+      setIsDrafting(false);
+    }
+  };
+
   if (result.isLoading) {
     return (
       <div className={`${compact ? 'p-2' : 'mt-4 p-4'} bg-gray-50 rounded-md border border-gray-200`}>
@@ -95,186 +111,78 @@ const TriageResult = ({ email, result, onFeedback, onEmailAction, onMessageLog, 
     );
   }
 
-  if (compact) {
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 flex-1">
-            <span className="font-mono bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs">
-              {result.category}
-            </span>
-            <span className="text-sm text-gray-700 truncate flex-1">
-              {result.summary}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-            >
-              {isExpanded ? 'Collapse' : 'Details'}
-            </button>
-            <button 
-              onClick={handleGoodFeedback}
-              className={`p-1 rounded text-xs transition ${
-                result.feedback === 'good' 
-                  ? 'bg-green-500 text-white' 
-                  : 'bg-green-100 text-green-800 hover:bg-green-200'
-              }`}
-              disabled={result.feedback === 'good'}
-              title="Mark as correct"
-            >
-              <CheckIcon className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
-        
-        {isExpanded && (
-          <div className="pl-4 border-l-2 border-gray-200 space-y-3">
-            <div className="space-y-2">
-              <p className="font-semibold text-sm">Suggested Actions:</p>
-              {Object.entries(result.actions || {}).map(([type, actions]) => (
-                actions.length > 0 && (
-                  <div key={type} className={`border rounded p-2 ${getActionColor(type)}`}>
-                    <div className="flex items-center gap-1 mb-1">
-                      {getActionIcon(type)}
-                      <h4 className="font-medium text-sm capitalize">{type}</h4>
-                    </div>
-                    <ul className="space-y-1">
-                      {actions.map((action, i) => (
-                        <li key={i} className="flex items-center justify-between">
-                          <span className="text-xs">{typeof action === 'object' ? action.description : action}</span>
-                          {(type.toLowerCase() === 'gmail' || type.toLowerCase() === 'monday.com') && (
-                            <button
-                              onClick={() => executeQuickAction(typeof action === 'object' ? action.description : action, type)}
-                              className="ml-2 bg-white px-1 py-0.5 rounded text-xs hover:bg-gray-100 transition"
-                            >
-                              Execute
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )
-              ))}
-            </div>
+  const ConfidenceMeter = ({ score }) => {
+    const scorePercentage = (score / 10) * 100;
+    let colorClass = 'bg-red-500';
+    if (score >= 4) colorClass = 'bg-yellow-500';
+    if (score >= 7) colorClass = 'bg-green-500';
 
-            <div className="pt-2 border-t">
-              <div className="flex items-start gap-2">
-                <textarea
-                  placeholder="If incorrect, explain what should have been different..."
-                  className="flex-1 p-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500"
-                  rows="2"
-                  value={writtenFeedback}
-                  onChange={(e) => setWrittenFeedback(e.target.value)}
-                  disabled={result.feedback === 'bad'}
-                />
-                <button
-                  onClick={submitFeedback}
-                  disabled={isSubmittingFeedback || !writtenFeedback.trim() || result.feedback === 'bad'}
-                  className="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 disabled:bg-blue-300 transition"
-                >
-                  {isSubmittingFeedback ? 'Saving...' : 'Submit'}
-                </button>
-              </div>
-              
-              {result.feedback === 'bad' && (
-                <div className="mt-1 text-xs text-gray-600 bg-yellow-50 border border-yellow-200 rounded p-1">
-                  Feedback: "{result.feedback_text}"
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+    return (
+      <div className="w-full bg-gray-200 rounded-full h-2.5">
+        <div className={`${colorClass} h-2.5 rounded-full`} style={{ width: `${scorePercentage}%` }}></div>
       </div>
     );
-  }
+  };
+
+  const KeyPointTag = ({ point }) => {
+    const colors = {
+      "Schedule": "bg-blue-100 text-blue-800",
+      "Respond": "bg-green-100 text-green-800",
+      "Update_Database": "bg-purple-100 text-purple-800",
+      "Archive": "bg-gray-100 text-gray-800",
+      "Review": "bg-yellow-100 text-yellow-800",
+    };
+    return (
+      <span className={`px-2 py-1 rounded-full text-xs font-medium ${colors[point] || 'bg-gray-100'}`}>
+        {point?.replace('_', ' ')}
+      </span>
+    );
+  };
 
   return (
-    <div className="mt-4 p-4 bg-gray-50 rounded-md border border-gray-200">
-      <div className="mb-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="font-bold">Category:</span>
-          <span className="font-mono bg-purple-100 text-purple-800 px-2 py-1 rounded-md text-sm">
-            {result.category}
-          </span>
-        </div>
-        <p className="mb-3">
-          <span className="font-bold">Summary:</span> {result.summary}
-        </p>
-      </div>
-
-      <div className="space-y-3 mb-4">
-        <p className="font-bold">Suggested Actions:</p>
-        {Object.entries(result.actions || {}).map(([type, actions]) => (
-          actions.length > 0 && (
-            <div key={type} className={`border rounded-lg p-3 ${getActionColor(type)}`}>
-              <div className="flex items-center gap-2 mb-2">
-                {getActionIcon(type)}
-                <h4 className="font-semibold capitalize">{type}</h4>
-              </div>
-              <ul className="space-y-1">
-                {actions.map((action, i) => (
-                  <li key={i} className="flex items-center justify-between">
-                    <span className="text-sm">{typeof action === 'object' ? action.description : action}</span>
-                    {(type.toLowerCase() === 'gmail' || type.toLowerCase() === 'monday.com') && (
-                      <button
-                        onClick={() => executeQuickAction(typeof action === 'object' ? action.description : action, type)}
-                        className="ml-2 bg-white px-2 py-1 rounded text-xs font-medium hover:bg-gray-100 transition"
-                      >
-                        Execute
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+    <div className="p-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
+      <div className="grid grid-cols-12 gap-4">
+        {/* Left Side: Summary & Confidence */}
+        <div className="col-span-12 md:col-span-7 space-y-3">
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Summary</h4>
+            <p className="text-sm text-gray-800">{result.summary}</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Confidence</h4>
+              <ConfidenceMeter score={result.confidence} />
             </div>
-          )
-        ))}
-      </div>
-
-      <div className="pt-4 border-t">
-        <p className="font-bold text-sm mb-2">Was this triage helpful?</p>
-        <div className="flex items-start gap-4">
-          <button 
-            onClick={handleGoodFeedback}
-            className={`flex items-center gap-1 p-2 rounded-lg text-sm transition ${
-              result.feedback === 'good' 
-                ? 'bg-green-500 text-white' 
-                : 'bg-green-100 text-green-800 hover:bg-green-200'
-            }`}
-            disabled={result.feedback === 'good'}
-          >
-            <CheckIcon className="h-4 w-4" /> 
-            Correct
-          </button>
-          
-          <div className="flex-grow">
-            <textarea
-              placeholder="If incorrect, explain what the triage should have been..."
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              rows="2"
-              value={writtenFeedback}
-              onChange={(e) => setWrittenFeedback(e.target.value)}
-              disabled={result.feedback === 'bad'}
-            />
-            <button
-              onClick={submitFeedback}
-              disabled={isSubmittingFeedback || !writtenFeedback.trim() || result.feedback === 'bad'}
-              className="mt-2 w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-blue-300 flex items-center justify-center gap-2 transition"
-            >
-              <BrainIcon className="h-4 w-4" />
-              {isSubmittingFeedback ? 'Saving...' : 'Submit Correction'}
-            </button>
+            <div className="text-center">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Key Point</h4>
+              <KeyPointTag point={result.key_point} />
+            </div>
           </div>
         </div>
-        
-        {result.feedback === 'bad' && (
-          <div className="mt-2 text-sm text-gray-600 bg-yellow-50 border border-yellow-200 rounded p-2">
-            Feedback submitted: "{result.feedback_text}"
+
+        {/* Right Side: Draft & Actions */}
+        <div className="col-span-12 md:col-span-5 space-y-3 pl-4 border-l border-gray-200">
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Suggested Draft</h4>
+            {result.suggested_draft ? (
+              <>
+                <div className="p-2 border rounded-md bg-white text-xs text-gray-700 max-h-24 overflow-y-auto">
+                  <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft}</pre>
+                </div>
+                <button
+                  onClick={handleCreateDraft}
+                  disabled={isDrafting}
+                  className="w-full mt-2 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
+                >
+                  <SparklesIcon className="h-3 w-3" />
+                  {isDrafting ? 'Creating...' : 'Create Gmail Draft'}
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-gray-500 italic">No response needed.</p>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
