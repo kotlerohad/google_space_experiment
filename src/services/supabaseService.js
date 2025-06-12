@@ -200,6 +200,14 @@ class SupabaseService {
     for (const op of operations) {
       const { action, table, payload, where } = op;
       
+      // Validate required fields
+      if (!action || typeof action !== 'string') {
+        throw new Error(`Invalid operation: missing or invalid 'action' field in ${JSON.stringify(op)}`);
+      }
+      if (!table || typeof table !== 'string') {
+        throw new Error(`Invalid operation: missing or invalid 'table' field in ${JSON.stringify(op)}`);
+      }
+      
       try {
         const resolvedPayload = payload ? await this._resolveLookups(payload) : {};
 

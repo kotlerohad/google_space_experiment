@@ -25,9 +25,15 @@ DATABASE SCHEMA:
 ### companies
 - id (int, primary key)
 - name (text, required)
-- industry (text)
+- country (text)
+- status (text)
 - company_type_id (int, foreign key to company_types.id)
+- priority (int)
+- number_of_employees (int)
+- number_of_developers (int)
+- potential_arr_eur (decimal)
 - created_at (timestamp)
+- updated_at (timestamp)
 
 ### activities
 - id (int, primary key)

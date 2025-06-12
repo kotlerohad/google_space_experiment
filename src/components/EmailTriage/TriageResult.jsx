@@ -1,80 +1,8 @@
 import React, { useState } from 'react';
-import { CheckIcon, BrainIcon, MailIcon, CalendarIcon, UserIcon, PlayIcon, SparklesIcon } from '../shared/Icons';
+import { SparklesIcon } from '../shared/Icons';
 
-const TriageResult = ({ email, result, onFeedback, onEmailAction, onMessageLog, compact = false }) => {
-  const [writtenFeedback, setWrittenFeedback] = useState('');
-  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+const TriageResult = ({ email, result, onEmailAction, onMessageLog, compact = false }) => {
   const [isDrafting, setIsDrafting] = useState(false);
-
-  const handleGoodFeedback = async () => {
-    await onFeedback(email.id, email, result, 'good');
-  };
-
-  const submitFeedback = async () => {
-    if (!writtenFeedback.trim()) {
-      onMessageLog?.('Please provide written feedback explaining the correction.', 'error');
-      return;
-    }
-
-    setIsSubmittingFeedback(true);
-    try {
-      await onFeedback(email.id, email, result, 'bad', writtenFeedback);
-      setWrittenFeedback('');
-      onMessageLog?.('Thank you! Your feedback has been saved to improve future AI responses.', 'success');
-    } catch (error) {
-      onMessageLog?.(`Failed to save feedback: ${error.message}`, 'error');
-    } finally {
-      setIsSubmittingFeedback(false);
-    }
-  };
-
-  const getActionIcon = (type) => {
-    switch (type.toLowerCase()) {
-      case 'gmail':
-        return <MailIcon className="h-4 w-4" />;
-      case 'calendar':
-        return <CalendarIcon className="h-4 w-4" />;
-      case 'human':
-        return <UserIcon className="h-4 w-4" />;
-      case 'monday.com':
-        return <div className="h-4 w-4 bg-blue-500 rounded"></div>;
-      default:
-        return <PlayIcon className="h-4 w-4" />;
-    }
-  };
-
-  const getActionColor = (type) => {
-    switch (type.toLowerCase()) {
-      case 'gmail':
-        return 'text-red-600 bg-red-50 border-red-200';
-      case 'calendar':
-        return 'text-blue-600 bg-blue-50 border-blue-200';
-      case 'human':
-        return 'text-orange-600 bg-orange-50 border-orange-200';
-      case 'monday.com':
-        return 'text-purple-600 bg-purple-50 border-purple-200';
-      default:
-        return 'text-gray-600 bg-gray-50 border-gray-200';
-    }
-  };
-
-  const executeQuickAction = async (actionText, actionType) => {
-    if (actionType.toLowerCase() === 'gmail') {
-      if (actionText.toLowerCase().includes('archive')) {
-        await onEmailAction(email.id, 'archive');
-      } else if (actionText.toLowerCase().includes('spam')) {
-        await onEmailAction(email.id, 'spam');
-      } else if (actionText.toLowerCase().includes('important')) {
-        await onEmailAction(email.id, 'important');
-      } else {
-        onMessageLog?.(`Gmail action "${actionText}" not implemented yet.`, 'info');
-      }
-    } else if (actionType.toLowerCase() === 'monday.com') {
-      onMessageLog?.(`Monday.com action "${actionText}" - Use the Monday.com section to execute this.`, 'info');
-    } else {
-      onMessageLog?.(`Action "${actionText}" noted. This would be handled by external integration.`, 'info');
-    }
-  };
 
   const handleCreateDraft = async () => {
     setIsDrafting(true);
