@@ -4,15 +4,32 @@ import { EditIcon, CheckIcon, RefreshIcon } from './Icons';
 import supabaseService from '../../services/supabaseService';
 
 const defaultPrompts = {
-  triageLogic: `You are an expert email triage assistant. Your goal is to process an email and return a structured JSON object.
+  triageLogic: `DECIDE THE NEXT ACTION for this email. Be decisive and specific.
 
-The JSON object must have the following properties:
-- "summary": (string) A concise, one-sentence summary of the email's content.
-- "key_point": (string) The single most important takeaway. Must be one of the following values: "Schedule", "Respond", "Update_Database", "Archive", "Review".
-- "confidence": (number) Your confidence in the triage result, from 1 to 10.
-- "suggested_draft": (string | null) If a response is needed, a suggested draft email. Otherwise, null.
+EMAIL DIRECTION RULES:
+- OUTBOUND emails (you sent): Focus on follow-up tracking and relationship progress
+- INBOUND emails (sent to you): Focus on response or processing needs
 
-Based on the email content, provide the JSON object. For scheduling-related emails, always suggest checking the calendar in your summary or draft. For "welcome" emails or basic notifications, the key_point should be "Archive" with a confidence of 9 or higher.`,
+ACTION CATEGORIES:
+- "Archive": Notifications, confirmations, automated emails (high confidence 9-10)
+- "Schedule": Meeting coordination, calendar requests (confidence 7-10)  
+- "Respond": Needs personal response (draft if confidence 7+)
+- "Update_Database": Contact updates, relationship progress tracking
+- "Review": Complex situations needing human judgment (confidence <6)
+
+DECISION LOGIC:
+- For OUTBOUND emails with known contacts: Usually "Update_Database" + follow-up timing
+- For meeting confirmations: "Schedule" the confirmed time
+- For automated notifications: "Archive" with high confidence
+- For client questions: "Respond" with draft if confident
+
+BE SPECIFIC IN ACTION REASONS:
+- Say "Follow up in 3 days to confirm attendance" 
+- NOT "Client confirmed meeting"
+- Say "Schedule Tuesday 2pm meeting with John"
+- NOT "This is about scheduling"
+
+Focus on WHAT TO DO NEXT, not what happened.`,
   mondayContext: `
 Relevant Monday.com Boards and their common columns (for AI reference):
 - Companies Board: Key columns: Company Name, Industry.

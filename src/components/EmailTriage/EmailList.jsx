@@ -33,12 +33,66 @@ const EmailList = ({ onMessageLog, config }) => {
     }
   }, [isConfigLoaded, loadTriageLogic]);
 
+  // Debug effect to check OpenAI service status
+  useEffect(() => {
+    if (isConfigLoaded) {
+      console.log('EmailList - Config loaded. OpenAI service status:', {
+        serviceExists: !!openAIService,
+        hasApiKey: openAIService?.apiKey ? 'Set' : 'Not set',
+        apiKeyLength: openAIService?.apiKey?.length || 0
+      });
+    }
+  }, [isConfigLoaded, openAIService]);
+
   const saveTriageResult = async (emailId, resultData) => {
     try {
-      await supabaseService.create('triage_results', { id: emailId, ...resultData });
+      console.log('Saving triage result:', { emailId, resultData });
+      
+      // Ensure we have valid data before attempting to save
+      if (!emailId || !resultData) {
+        console.warn('Invalid data for triage result save:', { emailId, resultData });
+        return;
+      }
+      
+      // Convert camelCase fields to snake_case for database
+      const dbData = {
+        id: emailId,
+        decision: resultData.decision || resultData.key_point || 'Review',
+        action_reason: resultData.action_reason || resultData.summary || 'Action required',
+        confidence: resultData.confidence || 0,
+        key_points: Array.isArray(resultData.key_points) ? resultData.key_points : 
+                   (resultData.key_points ? [resultData.key_points] : 
+                   (resultData.key_point ? [resultData.key_point] : [])),
+        contact_context: resultData.contactContext || null,  // camelCase -> snake_case
+        calendar_context: resultData.calendarContext || null, // camelCase -> snake_case
+        auto_drafted: resultData.draftCreated || false,
+        auto_archived: resultData.autoArchived || false
+      };
+      
+      await supabaseService.create('triage_results', dbData);
+      console.log('Triage result saved successfully');
     } catch (error) {
-      // It might fail if the record already exists, we can ignore this for now
-      console.warn(`Could not save triage result for ${emailId}:`, error.message);
+      // Better error handling for debugging
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      const errorCode = error?.code || 'unknown';
+      
+      console.error(`Failed to save triage result for ${emailId}:`, {
+        error,
+        errorMessage,
+        errorCode,
+        resultData,
+        errorType: typeof error,
+        isSupabaseError: error?.code !== undefined
+      });
+      
+      // Check if it's a table not found error
+      if (errorCode === '42P01' || errorMessage.includes('does not exist')) {
+        console.warn('triage_results table does not exist. Skipping save for now.');
+        return;
+      }
+      
+      // Don't fail the whole triage if saving fails
+      console.warn(`Could not save triage result for ${emailId}: ${errorMessage}`);
     }
   };
 
@@ -74,25 +128,127 @@ const EmailList = ({ onMessageLog, config }) => {
   };
 
   const handleTriage = async (email) => {
-    if (!config?.openaiApiKey) {
+    // Debug logging
+    console.log('Triage Debug:', {
+      openAIService: !!openAIService,
+      isConfigLoaded,
+      hasApiKey: openAIService?.apiKey ? 'Yes' : 'No'
+    });
+    
+    if (!openAIService || !isConfigLoaded) {
       setTriageResults(prev => ({ 
         ...prev, 
-        [email.id]: { error: 'Please configure your OpenAI API Key to triage.', isLoading: false } 
+        [email.id]: { error: 'OpenAI service not available. Please check your API key configuration.', isLoading: false } 
       }));
       return;
     }
 
     setTriageResults(prev => ({ ...prev, [email.id]: { ...prev[email.id], isLoading: true } }));
-    onMessageLog?.(`Starting triage for email: "${email.subject}"`, 'info');
+    onMessageLog?.(`Deciding action for email: "${email.subject}"`, 'info');
 
     try {
-      const result = await openAIService.triageEmail(email, triageLogic);
+      // Step 1: Check if sender exists in database (per guidance)
+      let contactContext = null;
+      let isOutboundEmail = false;
+      
+      try {
+        const senderEmail = email.from.match(/<([^>]+)>/)?.[1] || email.from;
+        
+        // Check if this is an outbound email (from user)
+        const userEmails = ['ohad.kotler@tweezr.com', 'ohad@tweezr.com', 'okotler@gmail.com']; // Add your email addresses
+        isOutboundEmail = userEmails.some(userEmail => 
+          senderEmail.toLowerCase().includes(userEmail.toLowerCase()) ||
+          email.from.toLowerCase().includes(userEmail.toLowerCase())
+        );
+        
+        if (isOutboundEmail) {
+          // For outbound emails, look up the recipient in the database
+          const recipientEmails = [];
+          
+          // Extract recipient emails from email.to, email.cc fields if available
+          // For now, we'll check if any known contacts are mentioned in the subject or body
+          const { data: contacts } = await supabaseService.supabase
+            .from('contacts')
+            .select('id, name, email, company_id, companies(name)')
+            .limit(50);
+          
+          if (contacts) {
+            const mentionedContact = contacts.find(contact => 
+              email.subject.toLowerCase().includes(contact.name.toLowerCase()) ||
+              email.body.toLowerCase().includes(contact.name.toLowerCase()) ||
+              email.body.toLowerCase().includes(contact.email.toLowerCase())
+            );
+            
+            if (mentionedContact) {
+              contactContext = mentionedContact;
+              onMessageLog?.(`Outbound email to known contact: ${contactContext.name}`, 'info');
+            }
+          }
+        } else {
+          // For inbound emails, check sender as before
+          const { data: contacts } = await supabaseService.supabase
+            .from('contacts')
+            .select('id, name, email, company_id, companies(name)')
+            .eq('email', senderEmail)
+            .limit(1);
+          
+          if (contacts && contacts.length > 0) {
+            contactContext = contacts[0];
+            onMessageLog?.(`Inbound email from known contact: ${contactContext.name}`, 'info');
+          }
+        }
+      } catch (error) {
+        console.warn('Contact lookup failed:', error);
+      }
+
+      // Step 2: Enhanced prompt with database and email direction context
+      let enhancedTriageLogic = triageLogic;
+      
+      enhancedTriageLogic += `\n\nEMAIL DIRECTION: This is an ${isOutboundEmail ? 'OUTBOUND' : 'INBOUND'} email.`;
+      
+      if (isOutboundEmail) {
+        enhancedTriageLogic += `\nOUTBOUND CONTEXT: You sent this email to a ${contactContext ? 'known contact' : 'potential client'}. Focus on follow-up actions and relationship tracking.`;
+      }
+      
+      if (contactContext) {
+        if (isOutboundEmail) {
+          enhancedTriageLogic += `\n\nRECIPIENT CONTEXT: The recipient ${contactContext.name} (${contactContext.email}) is a known contact in your database, associated with ${contactContext.companies?.name || 'No Company'}. Consider this ongoing relationship when deciding follow-up actions.`;
+        } else {
+          enhancedTriageLogic += `\n\nSENDER CONTEXT: The sender ${contactContext.name} (${contactContext.email}) is a known contact in your database, associated with ${contactContext.companies?.name || 'No Company'}. Consider this relationship when triaging.`;
+        }
+      }
+
+      // Step 3: Check calendar for scheduling emails (per guidance)
+      let calendarContext = null;
+      if (email.subject.toLowerCase().includes('meeting') || 
+          email.subject.toLowerCase().includes('schedule') || 
+          email.body.toLowerCase().includes('calendar') ||
+          email.body.toLowerCase().includes('meeting')) {
+        try {
+          const events = await emailService.testCalendarConnection();
+          calendarContext = `Your calendar has ${events.length} upcoming events in the next few days.`;
+          onMessageLog?.(`Calendar context added for scheduling email`, 'info');
+        } catch (error) {
+          console.warn('Calendar check failed:', error);
+        }
+      }
+
+      if (calendarContext) {
+        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext} When suggesting meeting times, consider your existing schedule.`;
+      }
+
+      const result = await openAIService.triageEmail(email, enhancedTriageLogic);
       
       const resultData = { 
         ...result, 
         feedback: null, 
         isLoading: false,
-        timestamp: new Date()
+        timestamp: new Date(),
+        contactContext: contactContext,  // This will be mapped to contact_context in save
+        calendarContext: calendarContext, // This will be mapped to calendar_context in save
+        email_received_at: new Date(email.date),
+        // Ensure backward compatibility - use action_reason as summary if summary not provided
+        summary: result.summary || result.action_reason || `Action: ${result.key_point}`
       };
 
       // Save to Supabase
@@ -100,24 +256,79 @@ const EmailList = ({ onMessageLog, config }) => {
       
       setTriageResults(prev => ({ ...prev, [email.id]: resultData }));
       
-      onMessageLog?.(`Triage completed for "${email.subject}"`, 'success');
+      onMessageLog?.(`Action decided for "${email.subject}": ${result.key_point} (confidence: ${result.confidence}/10)`, 'success');
 
-      // Auto-archive logic
+      // Step 4: Enhanced Auto-archive logic (per guidance: 9+ confidence AND >2 hours passed)
       if (result.key_point === 'Archive' && result.confidence >= 9) {
-        onMessageLog?.(`High confidence "Archive" suggestion. Auto-archiving email...`, 'info');
-        await handleEmailAction(email.id, 'archive');
-        // Mark as archived in the UI state as well
-        setTriageResults(prev => ({
-          ...prev,
-          [email.id]: { ...prev[email.id], autoArchived: true }
-        }));
+        const emailDate = new Date(email.date);
+        const now = new Date();
+        const hoursElapsed = (now - emailDate) / (1000 * 60 * 60);
+        
+        if (hoursElapsed > 2) {
+          onMessageLog?.(`High confidence "Archive" suggestion and >2 hours elapsed. Auto-archiving email...`, 'info');
+          await handleEmailAction(email.id, 'archive');
+          setTriageResults(prev => ({
+            ...prev,
+            [email.id]: { ...prev[email.id], autoArchived: true }
+          }));
+        } else {
+          onMessageLog?.(`High confidence "Archive" but only ${hoursElapsed.toFixed(1)} hours elapsed. Waiting for 2+ hours.`, 'info');
+        }
+      }
+
+      // Step 5: Auto-draft creation (per guidance: confidence 7+ for drafts)
+      if (result.suggested_draft && result.confidence >= 7) {
+        onMessageLog?.(`High confidence draft suggestion (${result.confidence}/10). Auto-creating draft...`, 'info');
+        try {
+          const subject = `Re: ${email.subject}`;
+          await emailService.createDraft(email.from.match(/<([^>]+)>/)?.[1] || email.from, subject, result.suggested_draft);
+          
+          setTriageResults(prev => ({
+            ...prev,
+            [email.id]: { ...prev[email.id], draftCreated: true }
+          }));
+          
+          onMessageLog?.(`Draft auto-created for "${email.subject}"`, 'success');
+        } catch (error) {
+          onMessageLog?.(`Failed to auto-create draft: ${error.message}`, 'error');
+        }
+      }
+
+      // Step 6: Enhanced database activity updates (per guidance)
+      if (contactContext && (result.key_point === 'Update_Database' || result.confidence >= 8)) {
+        try {
+          const activityName = isOutboundEmail 
+            ? `Outbound Email Sent: ${email.subject}`
+            : `Email Received: ${email.subject}`;
+            
+          const nextAction = isOutboundEmail
+            ? (result.action_reason || 'Follow up required')
+            : (result.suggested_draft ? 'Draft Response Created' : 'Review Required');
+            
+          await supabaseService.create('activities', {
+            activity_name: activityName,
+            status: isOutboundEmail ? 'Pending Follow-up' : 'Completed',
+            related_contact_id: contactContext.id,
+            action: result.key_point,
+            next_action: nextAction
+          });
+          
+          onMessageLog?.(`Database activity created for ${isOutboundEmail ? 'outbound email to' : 'inbound email from'} ${contactContext.name}`, 'success');
+        } catch (error) {
+          console.warn('Failed to create activity:', error);
+        }
+      }
+      
+      // Step 7: For outbound emails with no specific contact, suggest creating a lead
+      if (isOutboundEmail && !contactContext && result.confidence >= 7) {
+        onMessageLog?.(`Outbound email to potential new contact - consider adding to database`, 'info');
       }
 
     } catch (error) {
       console.error("Triage failed:", error);
       const errorResult = { error: error.message, isLoading: false };
       setTriageResults(prev => ({ ...prev, [email.id]: errorResult }));
-      onMessageLog?.(`Triage failed for "${email.subject}": ${error.message}`, 'error');
+      onMessageLog?.(`Action decision failed for "${email.subject}": ${error.message}`, 'error');
     }
   };
 
@@ -200,41 +411,41 @@ const EmailList = ({ onMessageLog, config }) => {
   };
 
   const handleTriageAll = async () => {
-    if (!config?.openaiApiKey) {
-      onMessageLog?.('Please configure your OpenAI API Key to use batch triage.', 'error');
+    if (!openAIService || !isConfigLoaded) {
+      onMessageLog?.('OpenAI service not available. Please check your API key configuration.', 'error');
       return;
     }
 
     if (emails.length === 0) {
-      onMessageLog?.('No emails to triage. Please fetch emails first.', 'error');
+      onMessageLog?.('No emails to process. Please fetch emails first.', 'error');
       return;
     }
 
-    onMessageLog?.(`Starting batch triage for ${emails.length} emails...`, 'info');
+    onMessageLog?.(`Starting batch action decisions for ${emails.length} emails...`, 'info');
     
-    // Triage all emails that haven't been triaged yet
-    const untriaged = emails.filter(email => !triageResults[email.id]?.summary && !triageResults[email.id]?.isLoading);
+    // Process all emails that haven't been processed yet
+    const unprocessed = emails.filter(email => !triageResults[email.id]?.key_point && !triageResults[email.id]?.isLoading);
     
-    if (untriaged.length === 0) {
-      onMessageLog?.('All emails are already triaged!', 'info');
+    if (unprocessed.length === 0) {
+      onMessageLog?.('All emails already have action decisions!', 'info');
       return;
     }
 
-    onMessageLog?.(`Triaging ${untriaged.length} remaining emails...`, 'info');
+    onMessageLog?.(`Processing ${unprocessed.length} remaining emails...`, 'info');
 
     // Process emails in batches to avoid overwhelming the API
-    for (let i = 0; i < untriaged.length; i++) {
-      const email = untriaged[i];
-      onMessageLog?.(`Triaging email ${i + 1}/${untriaged.length}: "${email.subject}"`, 'info');
+    for (let i = 0; i < unprocessed.length; i++) {
+      const email = unprocessed[i];
+      onMessageLog?.(`Deciding action ${i + 1}/${unprocessed.length}: "${email.subject}"`, 'info');
       await handleTriage(email);
       
       // Small delay between requests to be respectful to the API
-      if (i < untriaged.length - 1) {
+      if (i < unprocessed.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    onMessageLog?.(`Batch triage completed! Processed ${untriaged.length} emails.`, 'success');
+    onMessageLog?.(`Batch action decisions completed! Processed ${unprocessed.length} emails.`, 'success');
   };
 
   return (
@@ -244,7 +455,7 @@ const EmailList = ({ onMessageLog, config }) => {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <MailIcon className="h-5 w-5 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-700">Email Triage</h2>
+            <h2 className="text-xl font-semibold text-gray-700">Email Action Decisions</h2>
           </div>
           <button
             onClick={fetchEmails}
@@ -272,16 +483,16 @@ const EmailList = ({ onMessageLog, config }) => {
                   <strong>{emails.length}</strong> emails loaded
                 </span>
                 <span className="text-sm text-gray-500">
-                  {Object.keys(triageResults).filter(id => triageResults[id]?.summary).length} triaged
+                  {Object.keys(triageResults).filter(id => triageResults[id]?.key_point).length} actions decided
                 </span>
               </div>
               <button
                 onClick={handleTriageAll}
-                disabled={isLoading || !config?.openaiApiKey || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
+                disabled={isLoading || !openAIService || !isConfigLoaded || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
                 className="flex items-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 text-sm"
               >
                 <SparklesIcon className="h-4 w-4" />
-                Triage All
+                Decide Actions
               </button>
             </div>
             
@@ -335,7 +546,7 @@ const EmailList = ({ onMessageLog, config }) => {
                           {triageResults[email.id]?.isLoading ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                               <div className="animate-spin rounded-full h-3 w-3 border-b border-yellow-600 mr-1"></div>
-                              Analyzing...
+                              Deciding...
                             </span>
                           ) : triageResults[email.id]?.error ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
@@ -343,15 +554,19 @@ const EmailList = ({ onMessageLog, config }) => {
                             </span>
                           ) : triageResults[email.id]?.autoArchived ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              ✓ Auto-Archived
+                              ✓ Executed: Archived
                             </span>
-                          ) : triageResults[email.id]?.summary ? (
+                          ) : triageResults[email.id]?.draftCreated ? (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              ✓ Triaged
+                              ✓ Executed: Draft Created
+                            </span>
+                          ) : triageResults[email.id]?.key_point ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              Action: {triageResults[email.id].key_point}
                             </span>
                           ) : (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                              Pending
+                              Pending Action
                             </span>
                           )}
                         </td>
@@ -363,7 +578,7 @@ const EmailList = ({ onMessageLog, config }) => {
                               className="bg-purple-600 text-white font-semibold py-1 px-3 rounded hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 flex items-center gap-1 text-xs"
                             >
                               <SparklesIcon className="h-3 w-3" />
-                              {triageResults[email.id]?.isLoading ? 'Triaging...' : 'Triage'}
+                              {triageResults[email.id]?.isLoading ? 'Deciding...' : 'Decide Action'}
                             </button>
                             
                             <button

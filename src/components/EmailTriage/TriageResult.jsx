@@ -70,46 +70,139 @@ const TriageResult = ({ email, result, onEmailAction, onMessageLog, compact = fa
   return (
     <div className="p-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
       <div className="grid grid-cols-12 gap-4">
-        {/* Left Side: Summary & Confidence */}
+        {/* Left Side: Action Decision & Context */}
         <div className="col-span-12 md:col-span-7 space-y-3">
-          <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Summary</h4>
-            <p className="text-sm text-gray-800">{result.summary}</p>
+          {/* PRIMARY: Action Decision */}
+          <div className="p-3 bg-white border border-gray-300 rounded-lg shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold text-gray-700 uppercase">Action Decision</h4>
+              <div className="flex items-center gap-2">
+                <KeyPointTag point={result.key_point} />
+                                 <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                   result.confidence >= 8 ? 'bg-green-100 text-green-700' :
+                   result.confidence >= 6 ? 'bg-yellow-100 text-yellow-700' :
+                   'bg-red-100 text-red-700'
+                 }`}>
+                   {result.confidence || 0}/10 confidence
+                 </span>
+              </div>
+            </div>
+                         <div className="space-y-1">
+               <p className="text-sm text-gray-800 font-medium">
+                 <span className="text-xs text-gray-500 uppercase tracking-wide">Next Action:</span>
+               </p>
+               <p className="text-sm text-gray-900 font-semibold bg-gray-100 p-2 rounded">
+                 {result.action_reason || result.summary || 'No specific action provided'}
+               </p>
+               {(!result.action_reason && result.summary) && (
+                 <p className="text-xs text-orange-600 italic">⚠️ This appears to be a summary, not an actionable next step</p>
+               )}
+             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Confidence</h4>
-              <ConfidenceMeter score={result.confidence} />
+
+          {/* Contact Context (if relevant) */}
+          {result.contactContext && (
+            <div className="p-2 bg-blue-50 border border-blue-200 rounded-md">
+              <h4 className="text-xs font-semibold text-blue-700 uppercase mb-1">
+                {email.from.toLowerCase().includes('ohad') || email.from.toLowerCase().includes('tweezr') ? 'Outbound To' : 'Inbound From'}
+              </h4>
+              <p className="text-sm text-blue-800">
+                <strong>{result.contactContext.name}</strong> 
+                {result.contactContext.companies?.name && ` from ${result.contactContext.companies.name}`}
+              </p>
             </div>
-            <div className="text-center">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">Key Point</h4>
-              <KeyPointTag point={result.key_point} />
+          )}
+
+          {/* Outbound Email Indicator */}
+          {(email.from.toLowerCase().includes('ohad') || email.from.toLowerCase().includes('tweezr')) && (
+            <div className="p-2 bg-purple-50 border border-purple-200 rounded-md">
+              <h4 className="text-xs font-semibold text-purple-700 uppercase mb-1">Outbound Email</h4>
+              <p className="text-xs text-purple-700">Email sent by you - focus on follow-up tracking</p>
             </div>
+          )}
+
+          {/* Action Status Indicators */}
+          <div className="space-y-2">
+            {/* Auto-archive status */}
+            {result.key_point === 'Archive' && result.confidence >= 9 && (
+              <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs flex items-center gap-2">
+                {result.autoArchived ? (
+                  <>
+                    <span className="text-green-700 font-semibold">✓ EXECUTED:</span>
+                    <span className="text-green-700">Auto-archived (high confidence, &gt;2hrs elapsed)</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-yellow-700 font-semibold">⏳ PENDING:</span>
+                    <span className="text-yellow-700">Will auto-archive after 2 hours (confidence {result.confidence}/10)</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Auto-draft status */}
+            {result.draftCreated && (
+              <div className="p-2 bg-green-50 border border-green-200 rounded text-xs flex items-center gap-2">
+                <span className="text-green-700 font-semibold">✓ EXECUTED:</span>
+                <span className="text-green-700">Gmail draft auto-created (confidence {result.confidence}/10)</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right Side: Draft & Actions */}
+        {/* Right Side: Action Tools */}
         <div className="col-span-12 md:col-span-5 space-y-3 pl-4 border-l border-gray-200">
-          <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Suggested Draft</h4>
-            {result.suggested_draft ? (
-              <>
-                <div className="p-2 border rounded-md bg-white text-xs text-gray-700 max-h-24 overflow-y-auto">
-                  <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft}</pre>
-                </div>
-                <button
-                  onClick={handleCreateDraft}
-                  disabled={isDrafting}
-                  className="w-full mt-2 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
-                >
-                  <SparklesIcon className="h-3 w-3" />
-                  {isDrafting ? 'Creating...' : 'Create Gmail Draft'}
-                </button>
-              </>
-            ) : (
-              <p className="text-xs text-gray-500 italic">No response needed.</p>
-            )}
-          </div>
+          {/* Action-specific tools */}
+          {result.key_point === 'Respond' && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Response Action</h4>
+              {result.suggested_draft ? (
+                <>
+                  <div className="p-2 border rounded-md bg-white text-xs text-gray-700 max-h-24 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft}</pre>
+                  </div>
+                  
+                  {result.draftCreated ? (
+                    <div className="mt-2 p-2 bg-green-100 border border-green-200 rounded text-xs text-green-800">
+                      ✓ Draft auto-created (confidence ≥7)
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleCreateDraft}
+                      disabled={isDrafting}
+                      className="w-full mt-2 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
+                    >
+                      <SparklesIcon className="h-3 w-3" />
+                      {isDrafting ? 'Creating...' : 'Create Gmail Draft'}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-gray-500 italic">Response needed but no draft suggested (confidence &lt;7)</p>
+              )}
+            </div>
+          )}
+
+          {result.key_point === 'Schedule' && (
+            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+              <h4 className="font-semibold text-blue-700 mb-1">Scheduling Action Required</h4>
+              <p className="text-blue-700">Check calendar and coordinate meeting times</p>
+            </div>
+          )}
+
+          {result.key_point === 'Update_Database' && (
+            <div className="p-2 bg-purple-50 border border-purple-200 rounded text-xs">
+              <h4 className="font-semibold text-purple-700 mb-1">Database Action</h4>
+              <p className="text-purple-700">Contact or activity information needs updating</p>
+            </div>
+          )}
+
+          {result.key_point === 'Review' && (
+            <div className="p-2 bg-orange-50 border border-orange-200 rounded text-xs">
+              <h4 className="font-semibold text-orange-700 mb-1">Human Review Required</h4>
+              <p className="text-orange-700">Complex decision - confidence only {result.confidence}/10</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

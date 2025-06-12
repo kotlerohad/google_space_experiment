@@ -77,7 +77,7 @@ export const AppProvider = ({ children }) => {
         } else {
           console.log('🔧 AppContext - Initializing Supabase with valid credentials');
           try {
-            supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
+        supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
             console.log('✅ Supabase service initialized successfully');
           } catch (error) {
             console.error('❌ Failed to initialize Supabase service:', error);

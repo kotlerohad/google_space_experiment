@@ -214,7 +214,32 @@ Each operation object must have these exact fields:
   async triageEmail(email, triageLogic) {
     const prompt = `${triageLogic}\n\n--- EMAIL CONTENT ---\nFrom: ${email.from}\nSubject: ${email.subject}\n\n${email.body}`;
     
-    const systemPrompt = `You are an email triaging expert. Analyze the email content based on the user's logic and return a structured JSON response.`;
+    const systemPrompt = `You are an email action decision engine. You must return a JSON object with specific action decisions, not summaries.
+
+REQUIRED JSON FORMAT:
+{
+  "key_point": "Archive|Schedule|Respond|Update_Database|Review",
+  "confidence": 8,
+  "action_reason": "Specific actionable next step to take",
+  "suggested_draft": "Draft text if action is Respond and confidence >= 7, otherwise null"
+}
+
+CRITICAL REQUIREMENTS:
+- key_point: MUST be exactly one of the 5 values above
+- confidence: MUST be a number 1-10 representing confidence in the ACTION decision
+- action_reason: MUST be a concrete next step, NOT a summary of what happened
+- Return JSON only, no explanations or other text
+
+EXAMPLES OF GOOD action_reason:
+- "Follow up in 3 days to confirm meeting time"
+- "Schedule the proposed Tuesday meeting slot"
+- "Archive this automated notification"
+- "Update contact database with new job title"
+
+EXAMPLES OF BAD action_reason (these are summaries, not actions):
+- "John confirmed the meeting time"
+- "This is a scheduling email"
+- "The sender provided information"`;
 
     const payload = {
       model: this.model,
@@ -228,7 +253,18 @@ Each operation object must have these exact fields:
     const result = await this._request(payload);
     try {
       const content = result.choices[0].message.content;
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      
+      // Validate the response has required fields
+      if (!parsed.key_point || !parsed.confidence || !parsed.action_reason) {
+        console.warn("AI response missing required fields:", parsed);
+        throw new Error("AI response missing required fields");
+      }
+      
+      // Ensure confidence is a number
+      parsed.confidence = Number(parsed.confidence) || 0;
+      
+      return parsed;
     } catch (e) {
       console.error("Failed to parse JSON from OpenAI response for triage:", e);
       throw new Error("AI did not return valid JSON for triage.");
