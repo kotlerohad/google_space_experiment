@@ -3,11 +3,10 @@ import { AppContext } from '../../AppContext';
 import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon } from '../shared/Icons';
 import TriageResult from './TriageResult';
 import emailService from '../../services/emailService';
-import geminiService from '../../services/geminiService';
 import supabaseService from '../../services/supabaseService';
 
 const EmailList = ({ onMessageLog, config }) => {
-  const { isConfigLoaded } = useContext(AppContext);
+  const { isConfigLoaded, openAIService } = useContext(AppContext);
   const [emails, setEmails] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -75,10 +74,10 @@ const EmailList = ({ onMessageLog, config }) => {
   };
 
   const handleTriage = async (email) => {
-    if (!config?.geminiApiKey) {
+    if (!config?.openaiApiKey) {
       setTriageResults(prev => ({ 
         ...prev, 
-        [email.id]: { error: 'Please configure your Gemini API Key to triage.', isLoading: false } 
+        [email.id]: { error: 'Please configure your OpenAI API Key to triage.', isLoading: false } 
       }));
       return;
     }
@@ -87,8 +86,7 @@ const EmailList = ({ onMessageLog, config }) => {
     onMessageLog?.(`Starting triage for email: "${email.subject}"`, 'info');
 
     try {
-      geminiService.setApiKey(config.geminiApiKey);
-      const result = await geminiService.triageEmail(email, triageLogic);
+      const result = await openAIService.triageEmail(email, triageLogic);
       
       const resultData = { 
         ...result, 
@@ -202,8 +200,8 @@ const EmailList = ({ onMessageLog, config }) => {
   };
 
   const handleTriageAll = async () => {
-    if (!config?.geminiApiKey) {
-      onMessageLog?.('Please configure your Gemini API Key to use batch triage.', 'error');
+    if (!config?.openaiApiKey) {
+      onMessageLog?.('Please configure your OpenAI API Key to use batch triage.', 'error');
       return;
     }
 
@@ -279,7 +277,7 @@ const EmailList = ({ onMessageLog, config }) => {
               </div>
               <button
                 onClick={handleTriageAll}
-                disabled={isLoading || !config?.geminiApiKey || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
+                disabled={isLoading || !config?.openaiApiKey || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
                 className="flex items-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 text-sm"
               >
                 <SparklesIcon className="h-4 w-4" />

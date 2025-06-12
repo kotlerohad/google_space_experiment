@@ -42,7 +42,7 @@ const AppContent = () => {
     );
   }
   
-  const isConfigured = config.geminiApiKey || (config.googleClientId && config.googleClientSecret) || config.demoMode;
+  const isConfigured = config.openaiApiKey || (config.googleClientId && config.googleClientSecret) || config.demoMode;
 
   return (
     <>

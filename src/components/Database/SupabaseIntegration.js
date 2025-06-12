@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
-import { RefreshCw, PlusCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
+import SupabaseStatus from './SupabaseStatus';
+
 
 const DataTable = ({ records, columns, isLoading }) => {
   if (isLoading) {
@@ -125,6 +127,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
 
   return (
     <div className="space-y-4">
+      <SupabaseStatus />
       {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">{error}</div>}
 
       <div className="flex items-center justify-between">

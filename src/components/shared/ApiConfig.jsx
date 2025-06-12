@@ -1,7 +1,7 @@
 import React, { useState, useContext, useEffect, useCallback } from 'react';
 import { AppContext } from '../../AppContext';
 import emailService from '../../services/emailService';
-import geminiService from '../../services/geminiService';
+import openAIService from '../../services/openAIService';
 import supabaseService from '../../services/supabaseService';
 import { toast } from 'sonner';
 
@@ -50,7 +50,7 @@ const ApiConfig = () => {
   const { config } = useContext(AppContext);
   const [isLoading, setIsLoading] = useState(false);
   const [statuses, setStatuses] = useState({
-    gemini: false,
+    openai: false,
     gmail: false,
     calendar: false,
     supabase: false,
@@ -58,19 +58,18 @@ const ApiConfig = () => {
 
   const checkInitialStatuses = useCallback(() => {
     setStatuses({
-      gemini: !!config.geminiApiKey,
+      openai: !!config.openaiApiKey,
       gmail: emailService.getOAuthStatus().hasAccessToken,
       calendar: emailService.getOAuthStatus().hasCalendarAccess,
       supabase: supabaseService.isConnected(),
     });
-  }, [config.geminiApiKey]);
+  }, [config.openaiApiKey]);
 
   useEffect(() => {
     checkInitialStatuses();
     const interval = setInterval(checkInitialStatuses, 5000); // Re-check every 5s
     return () => clearInterval(interval);
   }, [checkInitialStatuses]);
-
 
   const handleGmailOAuth = async () => {
     if (!config.googleClientId || !config.googleClientSecret) {
@@ -97,14 +96,14 @@ const ApiConfig = () => {
     checkInitialStatuses();
   };
   
-  const testGeminiConnection = async () => {
-    if (!statuses.gemini) return;
+  const testOpenAIConnection = async () => {
+    if (!statuses.openai) return;
     try {
       setIsLoading(true);
-      await geminiService.testConnection();
-      toast.success('Gemini API test successful!');
+      await openAIService.testConnection();
+      toast.success('OpenAI API test successful!');
     } catch (error) {
-      toast.error(`Gemini API test failed: ${error.message}`);
+      toast.error(`OpenAI API test failed: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -154,9 +153,9 @@ const ApiConfig = () => {
   return (
     <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
       <StatusIndicator
-        label="Gemini AI"
-        isConnected={statuses.gemini}
-        onTest={testGeminiConnection}
+        label="OpenAI"
+        isConnected={statuses.openai}
+        onTest={testOpenAIConnection}
         isLoading={isLoading}
       />
       <StatusIndicator
