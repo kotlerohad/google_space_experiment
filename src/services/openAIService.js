@@ -307,6 +307,12 @@ DUAL DRAFT CREATION:
   * Explore potential collaboration areas or understand their situation better
   * Use phrases like "Could you tell me more about...", "I'm curious about...", "What are your thoughts on..."
 
+DUAL DRAFT GENERATION RULES:
+- Generate BOTH pushy and exploratory drafts when key_point is "Respond" AND confidence >= 4
+- Even for uncertain responses (confidence 4-6), provide both draft options for user review
+- This is low cost, high value since user reviews all drafts before sending
+- For confidence < 4, focus on explaining uncertainty rather than drafting responses
+
 EXAMPLE DUAL DRAFTS:
 Pushy: "Hi [Name], I'd like to schedule our discussion about [topic]. I have these times available: [times]. Can we confirm one of these slots by end of day?"
 
@@ -334,6 +340,9 @@ CRITICAL REQUIREMENTS:
 - key_point: MUST be exactly one of the 5 values above (your primary recommendation)
 - confidence: MUST be a number 1-10 representing confidence in the ACTION decision
 - action_reason: MUST be a concrete next step, NOT a summary of what happened
+- suggested_draft_pushy: REQUIRED when key_point is "Respond" AND confidence >= 4
+- suggested_draft_exploratory: REQUIRED when key_point is "Respond" AND confidence >= 4
+- suggested_draft: Use for backward compatibility (can be same as pushy or exploratory)
 - database_suggestions: ALWAYS include this object, even if has_business_relevance is false
 - Return JSON only, no explanations or other text
 

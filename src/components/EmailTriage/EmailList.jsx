@@ -312,7 +312,8 @@ const EmailList = ({ onMessageLog, config }) => {
         }
       }
 
-      // Step 5: Auto-draft creation (per guidance: confidence 7+ for drafts)
+      // Step 5: Auto-draft creation (per guidance: confidence 7+ for AUTO-creation)
+      // Note: Dual drafts are generated at confidence 4+ for manual review, but auto-creation still requires 7+
       if ((result.suggested_draft_pushy || result.suggested_draft_exploratory || result.suggested_draft) && result.confidence >= 7) {
         onMessageLog?.(`High confidence draft suggestion (${result.confidence}/10). Auto-creating draft...`, 'info');
         try {
@@ -334,6 +335,8 @@ const EmailList = ({ onMessageLog, config }) => {
         } catch (error) {
           onMessageLog?.(`Failed to auto-create draft: ${error.message}`, 'error');
         }
+      } else if (result.key_point === 'Respond' && result.confidence >= 4 && (result.suggested_draft_pushy || result.suggested_draft_exploratory)) {
+        onMessageLog?.(`Moderate confidence response (${result.confidence}/10). Dual drafts available for manual review.`, 'info');
       }
 
       // Step 6: Enhanced database activity updates (per guidance)

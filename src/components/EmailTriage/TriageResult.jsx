@@ -567,8 +567,12 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
                     </button>
                   )}
                 </>
+              ) : result.confidence >= 4 ? (
+                <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                  <p className="text-yellow-700">Response suggested but confidence is moderate ({result.confidence}/10). Consider the alternative options above or provide more context.</p>
+                </div>
               ) : (
-                <p className="text-xs text-gray-500 italic">Response needed but no draft suggested (confidence &lt;7)</p>
+                <p className="text-xs text-gray-500 italic">Response needed but confidence too low (&lt;4/10) for draft suggestions</p>
               )}
               
               {/* Auto-draft status for dual drafts */}
