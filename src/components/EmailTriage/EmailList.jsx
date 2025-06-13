@@ -12,6 +12,7 @@ const EmailList = ({ onMessageLog, config }) => {
   const [error, setError] = useState(null);
   const [triageResults, setTriageResults] = useState({});
   const [triageLogic, setTriageLogic] = useState(`You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`);
+  const [oauthStatus, setOauthStatus] = useState(emailService.getOAuthStatus());
 
   const loadTriageLogic = useCallback(async () => {
     if (!isConfigLoaded) return;
@@ -43,6 +44,35 @@ const EmailList = ({ onMessageLog, config }) => {
       });
     }
   }, [isConfigLoaded, openAIService]);
+
+  // OAuth status monitoring effect
+  useEffect(() => {
+    const checkOAuthStatus = () => {
+      const newStatus = emailService.getOAuthStatus();
+      setOauthStatus(newStatus);
+    };
+
+    // Check OAuth status immediately
+    checkOAuthStatus();
+
+    // Set up periodic checking (every 2 seconds) to catch OAuth completion
+    const interval = setInterval(checkOAuthStatus, 2000);
+
+    // Listen for storage changes (in case OAuth completes in another tab)
+    const handleStorageChange = (e) => {
+      if (e.key === 'gmail_tokens') {
+        checkOAuthStatus();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    // Cleanup
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   const saveTriageResult = async (emailId, resultData) => {
     try {
@@ -116,6 +146,10 @@ const EmailList = ({ onMessageLog, config }) => {
       const fetchedEmails = await emailService.fetchEmails(50);
       setEmails(fetchedEmails);
       onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
+      
+      // Update OAuth status after successful fetch
+      setOauthStatus(emailService.getOAuthStatus());
+      
       if (fetchedEmails.length === 0) {
         onMessageLog?.('No emails were returned from the API. Please check your Gmail account.', 'warning');
       }
@@ -504,7 +538,7 @@ const EmailList = ({ onMessageLog, config }) => {
           </div>
           <button
             onClick={fetchEmails}
-            disabled={isLoading || !emailService.getOAuthStatus().hasAccessToken}
+            disabled={isLoading || !oauthStatus.hasAccessToken}
             className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             <RefreshIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
