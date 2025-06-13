@@ -475,10 +475,6 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     fetchData(currentView);
   };
 
-  const handleRefresh = () => {
-    fetchData(currentView);
-  };
-
   const handleSuggestCleanup = async () => {
     if (!openAIService || !isConfigLoaded) {
       onMessageLog?.('OpenAI service not available. Please check your API key configuration.', 'error');
