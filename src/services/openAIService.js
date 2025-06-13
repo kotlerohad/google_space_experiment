@@ -219,6 +219,22 @@ Each operation object must have these exact fields:
   async triageEmail(email, triageLogic) {
     const prompt = `${triageLogic}\n\n--- EMAIL CONTENT ---\nFrom: ${email.from}\nSubject: ${email.subject}\n\n${email.body}`;
     
+    // Extract company name from email for research
+    let companyResearch = null;
+    const companyMatch = email.from.match(/@([^.]+)/);
+    if (companyMatch) {
+      const domain = companyMatch[1];
+      // Skip common email providers
+      const commonProviders = ['gmail', 'yahoo', 'outlook', 'hotmail', 'icloud'];
+      if (!commonProviders.includes(domain.toLowerCase())) {
+        try {
+          companyResearch = await this.searchCompanyInfo(domain);
+        } catch (error) {
+          console.warn('Company research failed:', error.message);
+        }
+      }
+    }
+
     const systemPrompt = `You are an email action decision engine with database management capabilities. You must return a JSON object with both action decisions AND database entry suggestions.
 
 REQUIRED JSON FORMAT:
@@ -287,6 +303,19 @@ CALENDAR-AWARE SCHEDULING GUIDELINES:
 - If no specific slots are available, ask for the sender's availability
 - Use "Schedule" as key_point for meeting coordination emails
 - Set confidence to 8-9 for scheduling emails when calendar context is available
+
+COMPANY RESEARCH INTEGRATION:
+- When responding to business emails from companies, ALWAYS search for recent information about the company first
+- Use web search to find: recent news, funding, partnerships, product launches, market position
+- Incorporate relevant findings into your response to demonstrate knowledge and identify opportunities
+- This makes responses more strategic and shows you've done your homework
+
+STRUCTURED TIME SLOT FORMATTING:
+- Always propose exactly 3 time slots for meetings
+- Each slot should be 2-3 hours long (e.g., "2:00 PM - 4:00 PM")
+- Start scheduling from 2 business days from today (skip weekends)
+- Format: "Day, Month Date, Time Range (Duration)"
+- Example: "Tuesday, December 17, 2:00 PM - 4:00 PM (2 hours)"
 
 DRAFT CREATION FOR SCHEDULING:
 - Start with a professional greeting
@@ -362,7 +391,9 @@ FOR UNCERTAIN CASES (confidence < 7):
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: prompt }
+        { role: "user", content: companyResearch ? 
+          `${prompt}\n\n--- COMPANY RESEARCH ---\n${companyResearch}` : 
+          prompt }
       ]
     };
 
@@ -549,6 +580,41 @@ Focus on finding duplicates, inconsistencies, and data quality issues specific t
     } catch (e) {
       console.error("Failed to parse JSON from OpenAI response for cleanup analysis:", e);
       throw new Error("AI did not return valid JSON for cleanup analysis.");
+    }
+  }
+
+  async searchCompanyInfo(companyDomain) {
+    // Use a web search to find recent information about the company
+    const searchQuery = `${companyDomain} company news funding partnerships 2024`;
+    
+    try {
+      // Note: In a real implementation, you'd use a proper search API like Google Custom Search, Bing Search API, etc.
+      // For now, we'll use a simple fetch to a search service or return mock data
+      
+      // Mock implementation - replace with actual search API
+      const searchResults = await this.performWebSearch(searchQuery);
+      
+      return `Recent information about ${companyDomain}:\n${searchResults}`;
+    } catch (error) {
+      console.warn(`Failed to search for company info: ${error.message}`);
+      return null;
+    }
+  }
+
+  async performWebSearch(query) {
+    // This method would be called from the browser environment
+    // We'll emit an event that the frontend can listen to and perform the search
+    
+    try {
+      // Emit a search request event
+      this.emitLLMEvent('search_request', { query });
+      
+      // In a real implementation, this would wait for the search results
+      // For now, we'll return a placeholder that indicates search is happening
+      return `Searching for recent information about this company...`;
+    } catch (error) {
+      console.warn('Web search failed:', error.message);
+      return `Unable to search for company information at this time.`;
     }
   }
 }

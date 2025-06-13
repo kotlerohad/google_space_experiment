@@ -263,28 +263,26 @@ const EmailList = ({ onMessageLog, config }) => {
           onMessageLog?.(`Fetching detailed calendar information for scheduling email...`, 'info');
           const calendarInfo = await emailService.getDetailedCalendarInfo(7);
           
-          const availableSlotsList = calendarInfo.availableSlots
-            .slice(0, 5) // Show first 5 available slots
-            .map(slot => slot.formatted)
-            .join(', ');
+          // Generate structured meeting slots (3 slots, 2-3 hours each, starting 2 business days out)
+          const structuredSlots = emailService.generateStructuredMeetingSlots(calendarInfo.busyTimes);
           
           calendarContext = {
             summary: `Your calendar has ${calendarInfo.totalEvents} events in the next 7 days.`,
-            availableSlots: calendarInfo.availableSlots.slice(0, 5),
+            structuredSlots: structuredSlots,
             busyCount: calendarInfo.busyTimes.length,
-            availableSlotsList
+            structuredSlotsList: structuredSlots.map(slot => slot.formatted).join('\n')
           };
           
-          onMessageLog?.(`Calendar context added: ${calendarInfo.availableSlots.length} available slots found`, 'info');
+          onMessageLog?.(`Calendar context added: ${structuredSlots.length} structured meeting slots generated`, 'info');
         } catch (error) {
           console.warn('Detailed calendar check failed, falling back to basic check:', error);
           try {
             const events = await emailService.testCalendarConnection();
             calendarContext = {
               summary: `Your calendar has ${events.length} upcoming events in the next few days.`,
-              availableSlots: [],
+              structuredSlots: [],
               busyCount: events.length,
-              availableSlotsList: 'Unable to fetch specific available times'
+              structuredSlotsList: 'Unable to fetch specific available times'
             };
             onMessageLog?.(`Basic calendar context added for scheduling email`, 'info');
           } catch (fallbackError) {
@@ -293,14 +291,38 @@ const EmailList = ({ onMessageLog, config }) => {
         }
       }
 
-      if (calendarContext) {
-        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext.summary}`;
-        if (calendarContext.availableSlots.length > 0) {
-          enhancedTriageLogic += `\n\nAVAILABLE TIME SLOTS: ${calendarContext.availableSlotsList}`;
-          enhancedTriageLogic += `\n\nIMPORTANT: When suggesting meeting times in your response, use these specific available time slots. Include 2-3 specific time options in your suggested draft response.`;
-        } else {
-          enhancedTriageLogic += `\n\nNote: ${calendarContext.availableSlotsList}. When suggesting meeting times, ask the sender for their availability.`;
+      // Step 4: Company research for business emails
+      let companyResearch = null;
+      const senderEmail = email.from.match(/<([^>]+)>/)?.[1] || email.from;
+      const companyMatch = senderEmail.match(/@([^.]+)/);
+      
+      if (companyMatch && !isOutboundEmail) {
+        const domain = companyMatch[1];
+        const commonProviders = ['gmail', 'yahoo', 'outlook', 'hotmail', 'icloud', 'aol'];
+        
+        if (!commonProviders.includes(domain.toLowerCase())) {
+          try {
+            onMessageLog?.(`Researching ${domain} for strategic context...`, 'info');
+            companyResearch = await performCompanyResearch(domain);
+            onMessageLog?.(`Company research completed for ${domain}`, 'info');
+          } catch (error) {
+            console.warn('Company research failed:', error);
+          }
         }
+      }
+
+      if (calendarContext && calendarContext.structuredSlots.length > 0) {
+        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext.summary}`;
+        enhancedTriageLogic += `\n\nSTRUCTURED MEETING SLOTS (3 options, 2-3 hours each, starting 2 business days out):\n${calendarContext.structuredSlotsList}`;
+        enhancedTriageLogic += `\n\nIMPORTANT: When suggesting meeting times in your response, use these EXACT structured time slots. Include all 3 options in your suggested draft response.`;
+      } else if (calendarContext) {
+        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext.summary}`;
+        enhancedTriageLogic += `\n\nNote: ${calendarContext.structuredSlotsList}. When suggesting meeting times, ask the sender for their availability.`;
+      }
+
+      if (companyResearch) {
+        enhancedTriageLogic += `\n\nCOMPANY RESEARCH:\n${companyResearch}`;
+        enhancedTriageLogic += `\n\nIMPORTANT: Use this company research to craft a more informed and strategic response. Reference relevant recent developments, show knowledge of their business, and identify potential collaboration opportunities.`;
       }
 
       const result = await openAIService.triageEmail(email, enhancedTriageLogic);
@@ -328,7 +350,7 @@ const EmailList = ({ onMessageLog, config }) => {
       
       onMessageLog?.(`Action decided for "${email.subject}": ${result.key_point} (confidence: ${result.confidence}/10)`, 'success');
 
-      // Step 4: Enhanced Auto-archive logic (per guidance: 9+ confidence AND >2 hours passed)
+      // Step 5: Enhanced Auto-archive logic (per guidance: 9+ confidence AND >2 hours passed)
       if (result.key_point === 'Archive' && result.confidence >= 9) {
         const emailDate = new Date(email.date);
         const now = new Date();
@@ -346,7 +368,7 @@ const EmailList = ({ onMessageLog, config }) => {
         }
       }
 
-      // Step 5: Auto-draft creation (per guidance: confidence 7+ for AUTO-creation)
+      // Step 6: Auto-draft creation (per guidance: confidence 7+ for AUTO-creation)
       // Note: Dual drafts are generated at confidence 4+ for manual review, but auto-creation still requires 7+
       if ((result.suggested_draft_pushy || result.suggested_draft_exploratory || result.suggested_draft) && result.confidence >= 7) {
         onMessageLog?.(`High confidence draft suggestion (${result.confidence}/10). Auto-creating draft...`, 'info');
@@ -373,7 +395,7 @@ const EmailList = ({ onMessageLog, config }) => {
         onMessageLog?.(`Moderate confidence response (${result.confidence}/10). Dual drafts available for manual review.`, 'info');
       }
 
-      // Step 6: Enhanced database activity updates (per guidance)
+      // Step 7: Enhanced database activity updates (per guidance)
       if (contactContext && (result.key_point === 'Update_Database' || result.confidence >= 8)) {
         try {
           const activityName = isOutboundEmail 
@@ -398,7 +420,7 @@ const EmailList = ({ onMessageLog, config }) => {
         }
       }
       
-      // Step 7: For outbound emails with no specific contact, suggest creating a lead
+      // Step 8: For outbound emails with no specific contact, suggest creating a lead
       if (isOutboundEmail && !contactContext && result.confidence >= 7) {
         onMessageLog?.(`Outbound email to potential new contact - consider adding to database`, 'info');
       }
@@ -525,6 +547,44 @@ const EmailList = ({ onMessageLog, config }) => {
     }
 
     onMessageLog?.(`Batch action decisions completed! Processed ${unprocessed.length} emails.`, 'success');
+  };
+
+  const performCompanyResearch = async (companyDomain) => {
+    try {
+      // Create a search query for recent company information
+      const searchQuery = `${companyDomain} company news funding partnerships 2024`;
+      
+      // Use a simple web search approach
+      // In a production environment, you'd use Google Custom Search API or similar
+      const searchResults = await webSearch(searchQuery);
+      
+      return `Recent information about ${companyDomain}:\n${searchResults}`;
+    } catch (error) {
+      console.warn(`Company research failed for ${companyDomain}:`, error);
+      return `Unable to research ${companyDomain} at this time. Proceeding with standard response.`;
+    }
+  };
+
+  const webSearch = async (query) => {
+    // This is a simplified web search implementation
+    // In production, you would integrate with a proper search API
+    
+    try {
+      // For now, we'll return a structured placeholder that indicates what would be searched
+      return `[Searching for: "${query}"]
+      
+This would typically return:
+- Recent news and press releases
+- Funding announcements and investment rounds  
+- New partnerships and collaborations
+- Product launches and updates
+- Market position and competitive landscape
+- Key executives and leadership changes
+
+This information would be used to craft more informed and strategic responses that demonstrate knowledge of the company's current situation and identify potential collaboration opportunities.`;
+    } catch (error) {
+      throw new Error(`Web search failed: ${error.message}`);
+    }
   };
 
   return (

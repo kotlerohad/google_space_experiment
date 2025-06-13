@@ -650,6 +650,107 @@ class EmailService {
       throw error;
     }
   }
+
+  generateStructuredMeetingSlots(busyTimes = []) {
+    const slots = [];
+    const now = new Date();
+    
+    // Start from 2 business days from now
+    let currentDate = new Date(now);
+    let businessDaysAdded = 0;
+    
+    // Find the date that is 2 business days from now
+    while (businessDaysAdded < 2) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      // Skip weekends
+      if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
+        businessDaysAdded++;
+      }
+    }
+    
+    // Generate 3 meeting slots over the next few business days
+    let slotsGenerated = 0;
+    let dayOffset = 0;
+    
+    while (slotsGenerated < 3 && dayOffset < 10) {
+      const slotDate = new Date(currentDate);
+      slotDate.setDate(currentDate.getDate() + dayOffset);
+      
+      // Skip weekends
+      if (slotDate.getDay() === 0 || slotDate.getDay() === 6) {
+        dayOffset++;
+        continue;
+      }
+      
+      // Define potential meeting times (2-3 hour slots)
+      const meetingTimes = [
+        { start: 9, duration: 2 },   // 9 AM - 11 AM
+        { start: 10, duration: 3 },  // 10 AM - 1 PM  
+        { start: 14, duration: 2 },  // 2 PM - 4 PM
+        { start: 15, duration: 2.5 } // 3 PM - 5:30 PM
+      ];
+      
+      for (const timeSlot of meetingTimes) {
+        if (slotsGenerated >= 3) break;
+        
+        const slotStart = new Date(slotDate);
+        slotStart.setHours(timeSlot.start, 0, 0, 0);
+        
+        const slotEnd = new Date(slotStart);
+        slotEnd.setHours(slotStart.getHours() + Math.floor(timeSlot.duration));
+        slotEnd.setMinutes(slotStart.getMinutes() + ((timeSlot.duration % 1) * 60));
+        
+        // Check if this slot conflicts with any busy time
+        const isConflict = busyTimes.some(busy => {
+          if (busy.isAllDay) {
+            return slotStart.toDateString() === busy.start.toDateString();
+          }
+          return (slotStart < busy.end && slotEnd > busy.start);
+        });
+        
+        if (!isConflict) {
+          slots.push({
+            start: slotStart,
+            end: slotEnd,
+            formatted: this.formatMeetingSlot(slotStart, slotEnd, timeSlot.duration),
+            duration: timeSlot.duration
+          });
+          slotsGenerated++;
+          break; // Move to next day after finding a slot
+        }
+      }
+      
+      dayOffset++;
+    }
+    
+    return slots;
+  }
+
+  formatMeetingSlot(start, end, duration) {
+    const options = {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric'
+    };
+    
+    const dateStr = start.toLocaleDateString('en-US', options);
+    const startTime = start.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+    const endTime = end.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+    
+    const durationStr = duration === Math.floor(duration) ? 
+      `${duration} hours` : 
+      `${Math.floor(duration)} hours ${((duration % 1) * 60)} minutes`;
+    
+    return `${dateStr}, ${startTime} - ${endTime} (${durationStr})`;
+  }
 }
 
 const emailService = new EmailService();

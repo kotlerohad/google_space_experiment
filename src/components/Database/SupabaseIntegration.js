@@ -78,6 +78,22 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
       return <span className={`font-medium ${color}`}>{confidence}%</span>;
     }
     
+    // Handle feedback (for triage results)
+    if (column.key === 'feedback') {
+      if (!value) {
+        return <span className="text-gray-400 italic">—</span>;
+      }
+      return (
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          value === 'good' 
+            ? 'bg-green-100 text-green-800' 
+            : 'bg-red-100 text-red-800'
+        }`}>
+          {value === 'good' ? '👍 Good' : '👎 Poor'}
+        </span>
+      );
+    }
+    
     // Handle email addresses
     if (column.key === 'email' && typeof value === 'string' && value.includes('@')) {
       return (
@@ -399,6 +415,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             decision,
             confidence,
             action_reason,
+            email_from,
             created_at,
             contact_context
           `);
@@ -434,6 +451,16 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             contactName = triage.contact_context.name;
           } else if (triage.contact_context && triage.contact_context.email) {
             contactName = triage.contact_context.email;
+          } else if (triage.email_from) {
+            // Try to extract a readable name from the email_from field
+            const emailMatch = triage.email_from.match(/^(.+?)\s*<(.+)>$/);
+            if (emailMatch) {
+              const [, name, email] = emailMatch;
+              contactName = name.trim().replace(/['"]/g, '') || email;
+            } else {
+              // Just use the email address
+              contactName = triage.email_from;
+            }
           } else {
             // Fallback to email ID format
             contactName = `Email ID: ${triage.id.substring(0, 8)}...`;

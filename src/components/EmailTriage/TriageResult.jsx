@@ -491,6 +491,35 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
               </div>
             )}
           </div>
+
+          {/* Feedback Display */}
+          {(result.feedback || feedbackGiven) && (
+            <div className={`p-2 border rounded-md ${
+              (result.feedback || feedbackGiven) === 'good' 
+                ? 'bg-green-50 border-green-200' 
+                : 'bg-red-50 border-red-200'
+            }`}>
+              <h4 className={`text-xs font-semibold uppercase mb-1 ${
+                (result.feedback || feedbackGiven) === 'good' 
+                  ? 'text-green-700' 
+                  : 'text-red-700'
+              }`}>
+                Feedback Provided
+              </h4>
+              <div className={`flex items-center gap-2 text-sm ${
+                (result.feedback || feedbackGiven) === 'good' 
+                  ? 'text-green-800' 
+                  : 'text-red-800'
+              }`}>
+                <span className="font-medium">
+                  {(result.feedback || feedbackGiven) === 'good' ? '👍 Good' : '👎 Needs Work'}
+                </span>
+                {result.feedback_text && (
+                  <span className="text-xs">- {result.feedback_text}</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Side: Action Tools */}
