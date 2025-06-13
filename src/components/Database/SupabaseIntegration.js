@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
 import { RefreshCw, Building2, Users, Activity, FileText } from 'lucide-react';
+import { CleanupIcon } from '../shared/Icons';
 import AICommandInput from './AICommandInput';
+import CleanupSuggestions from './CleanupSuggestions';
 
 
 const DataTable = ({ records, columns, isLoading, tableName }) => {
@@ -127,6 +129,34 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
       );
     }
     
+    // Handle clickable contact names in triage results
+    if (column.key === 'contact_name' && tableName === 'triage_results' && value) {
+      const isEmailId = value.startsWith('Email ID:');
+      if (isEmailId) {
+        return (
+          <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-mono">
+            {value}
+          </span>
+        );
+      } else {
+        return (
+          <button
+            onClick={() => {
+              // Navigate to contacts tab and search for this contact
+              const event = new CustomEvent('navigate-to-contact', { 
+                detail: { contactName: value } 
+              });
+              window.dispatchEvent(event);
+            }}
+            className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium hover:bg-blue-200 cursor-pointer transition-colors"
+            title={`Click to view ${value} in contacts`}
+          >
+            {value}
+          </button>
+        );
+      }
+    }
+    
     // Handle long text (summary, etc.)
     if (typeof value === 'string' && value.length > 100) {
       return (
@@ -140,6 +170,51 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
     
     if (typeof value === 'object') {
       return <pre className="text-xs bg-gray-100 p-1 rounded max-w-xs overflow-hidden">{JSON.stringify(value, null, 2)}</pre>;
+    }
+    
+    // Handle priority fields
+    if (column.key === 'priority') {
+      if (value === null || value === undefined) {
+        return <span className="text-gray-400 italic">—</span>;
+      }
+      const priorityColors = {
+        1: 'bg-red-100 text-red-800',
+        2: 'bg-yellow-100 text-yellow-800',
+        3: 'bg-green-100 text-green-800',
+      };
+      const priorityLabels = {
+        1: 'High',
+        2: 'Medium', 
+        3: 'Low'
+      };
+      const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+      const label = priorityLabels[value] || `Priority ${value}`;
+      return (
+        <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+          {label}
+        </span>
+      );
+    }
+    
+    // Handle due dates
+    if (column.key === 'next_step_due_date') {
+      if (value === null || value === undefined) {
+        return <span className="text-gray-400 italic">No due date</span>;
+      }
+      try {
+        const date = new Date(value);
+        const now = new Date();
+        const isOverdue = date < now;
+        const colorClass = isOverdue ? 'text-red-600' : 'text-gray-600';
+        return (
+          <span className={`text-sm ${colorClass}`}>
+            {date.toLocaleDateString()}
+            {isOverdue && <span className="ml-1 text-xs">(Overdue)</span>}
+          </span>
+        );
+      } catch {
+        return value;
+      }
     }
     
     return <span className="text-gray-900">{value.toString()}</span>;
@@ -221,39 +296,60 @@ const TABLE_CONFIG = {
     description: 'Track activities and follow-ups',
     columns: [
       { key: 'id', label: 'ID', width: 'w-16' },
-      { key: 'activity_name', label: 'Activity', width: 'w-48' },
+      { key: 'name', label: 'Activity', width: 'w-48' },
       { key: 'status', label: 'Status', width: 'w-24' },
-      { key: 'contact_name', label: 'Contact', width: 'w-32' },
-      { key: 'action', label: 'Action', width: 'w-32' },
-      { key: 'next_action', label: 'Next Action', width: 'w-32' },
+      { key: 'priority', label: 'Priority', width: 'w-20' },
+      { key: 'next_step', label: 'Next Step', width: 'w-48' },
+      { key: 'next_step_due_date', label: 'Due Date', width: 'w-32' },
       { key: 'created_at', label: 'Created', width: 'w-32' },
     ],
     orderBy: 'created_at',
-    orderDirection: 'desc',
-    customQuery: true
+    orderDirection: 'desc'
   },
   triage_results: {
     label: 'Email Triage',
     icon: FileText,
     description: 'AI-processed email insights',
     columns: [
-      { key: 'id', label: 'Email ID', width: 'w-32' },
-      { key: 'key_point', label: 'Key Point', width: 'w-64' },
+      { key: 'contact_name', label: 'Contact', width: 'w-48' },
+      { key: 'created_at', label: 'Date', width: 'w-32' },
+      { key: 'decision', label: 'Decision', width: 'w-32' },
       { key: 'confidence', label: 'Confidence', width: 'w-24' },
-      { key: 'summary', label: 'Summary', width: 'w-96' },
-      { key: 'timestamp', label: 'Processed', width: 'w-32' },
+      { key: 'action_reason', label: 'Reason', width: 'w-96' },
     ],
-    orderBy: 'timestamp',
-    orderDirection: 'desc'
+    orderBy: 'created_at',
+    orderDirection: 'desc',
+    customQuery: true
   },
 };
 
 const SupabaseIntegration = ({ onMessageLog }) => {
-  const { isConfigLoaded } = useContext(AppContext);
+  const { isConfigLoaded, openAIService } = useContext(AppContext);
   const [currentView, setCurrentView] = useState('companies');
   const [records, setRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [contactSearchFilter, setContactSearchFilter] = useState('');
+  const [cleanupSuggestions, setCleanupSuggestions] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // Handle navigation to contact
+  useEffect(() => {
+    const handleNavigateToContact = (event) => {
+      const { contactName } = event.detail;
+      setCurrentView('contacts');
+      setContactSearchFilter(contactName);
+      // Scroll to top after navigation
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 100);
+    };
+
+    window.addEventListener('navigate-to-contact', handleNavigateToContact);
+    return () => {
+      window.removeEventListener('navigate-to-contact', handleNavigateToContact);
+    };
+  }, []);
 
   const fetchData = useCallback(async (tableName) => {
     if (!isConfigLoaded || !supabaseService.isConnected()) return;
@@ -278,17 +374,33 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             created_at,
             companies!inner(name)
           `);
+        
+        // Apply search filter if set
+        if (contactSearchFilter) {
+          query = query.or(`name.ilike.%${contactSearchFilter}%,email.ilike.%${contactSearchFilter}%`);
+        }
       } else if (tableName === 'activities') {
         query = supabaseService.supabase
           .from('activities')
           .select(`
             id,
-            activity_name,
+            name,
             status,
-            action,
-            next_action,
+            priority,
+            next_step,
+            next_step_due_date,
+            created_at
+          `);
+      } else if (tableName === 'triage_results') {
+        query = supabaseService.supabase
+          .from('triage_results')
+          .select(`
+            id,
+            decision,
+            confidence,
+            action_reason,
             created_at,
-            contacts!inner(name)
+            contact_context
           `);
       } else {
         query = supabaseService.supabase.from(tableName).select('*');
@@ -313,11 +425,25 @@ const SupabaseIntegration = ({ onMessageLog }) => {
           ...contact,
           company_name: contact.companies?.name || 'No Company'
         }));
-      } else if (tableName === 'activities') {
-        transformedData = data.map(activity => ({
-          ...activity,
-          contact_name: activity.contacts?.name || 'No Contact'
-        }));
+      } else if (tableName === 'triage_results') {
+        transformedData = data.map(triage => {
+          let contactName = 'Unknown Contact';
+          
+          // Extract contact name from contact_context
+          if (triage.contact_context && triage.contact_context.name) {
+            contactName = triage.contact_context.name;
+          } else if (triage.contact_context && triage.contact_context.email) {
+            contactName = triage.contact_context.email;
+          } else {
+            // Fallback to email ID format
+            contactName = `Email ID: ${triage.id.substring(0, 8)}...`;
+          }
+          
+          return {
+            ...triage,
+            contact_name: contactName
+          };
+        });
       }
       
       setRecords(transformedData);
@@ -329,7 +455,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [onMessageLog, isConfigLoaded]);
+  }, [onMessageLog, isConfigLoaded, contactSearchFilter]);
 
   useEffect(() => {
     if (isConfigLoaded) {
@@ -337,14 +463,106 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     }
   }, [currentView, fetchData, isConfigLoaded]);
   
-  const handleViewChange = (view) => {
-    setRecords([]);
-    setCurrentView(view);
+  const handleViewChange = (newView) => {
+    setCurrentView(newView);
+    setContactSearchFilter(''); // Clear any search filters
+    setCleanupSuggestions(null); // Clear cleanup suggestions when switching tables
+    fetchData(newView);
   };
 
   const handleCommandExecuted = () => {
     // Refresh the current view after a command is executed
     fetchData(currentView);
+  };
+
+  const handleRefresh = () => {
+    fetchData(currentView);
+  };
+
+  const handleSuggestCleanup = async () => {
+    if (!openAIService || !isConfigLoaded) {
+      onMessageLog?.('OpenAI service not available. Please check your API key configuration.', 'error');
+      return;
+    }
+
+    if (!records || records.length === 0) {
+      onMessageLog?.('No data available to analyze. Please load data first.', 'warning');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setCleanupSuggestions(null);
+    
+    try {
+      onMessageLog?.(`Analyzing ${currentView} table for cleanup opportunities...`, 'info');
+      
+      // Get related tables data for better analysis
+      const relatedTables = {};
+      
+      if (currentView === 'contacts') {
+        // For contacts, also get companies data
+        try {
+          const { data: companiesData } = await supabaseService.supabase
+            .from('companies')
+            .select('id, name, company_type_id')
+            .limit(50);
+          if (companiesData) relatedTables.companies = companiesData;
+        } catch (error) {
+          console.warn('Failed to fetch companies for cleanup analysis:', error);
+        }
+      } else if (currentView === 'companies') {
+        // For companies, also get contacts data
+        try {
+          const { data: contactsData } = await supabaseService.supabase
+            .from('contacts')
+            .select('id, name, email, company_id')
+            .limit(50);
+          if (contactsData) relatedTables.contacts = contactsData;
+        } catch (error) {
+          console.warn('Failed to fetch contacts for cleanup analysis:', error);
+        }
+      }
+      
+      // Analyze the table for cleanup suggestions
+      const suggestions = await openAIService.analyzeTableForCleanup(
+        currentView,
+        records,
+        relatedTables
+      );
+      
+      setCleanupSuggestions(suggestions);
+      
+      const issueCount = suggestions.total_issues || suggestions.cleanup_suggestions?.length || 0;
+      onMessageLog?.(`Analysis complete: Found ${issueCount} potential cleanup opportunities`, 'success');
+      
+    } catch (error) {
+      console.error('Cleanup analysis failed:', error);
+      onMessageLog?.(`Cleanup analysis failed: ${error.message}`, 'error');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleApproveCleanup = async (suggestion) => {
+    try {
+      onMessageLog?.(`Executing cleanup: ${suggestion.description}`, 'info');
+      
+      // Execute the cleanup operations
+      await supabaseService.executeDbOperations(suggestion.operations);
+      
+      onMessageLog?.(`Cleanup completed successfully: ${suggestion.description}`, 'success');
+      
+      // Refresh the data to show the changes
+      await fetchData(currentView);
+      
+    } catch (error) {
+      console.error('Failed to execute cleanup:', error);
+      throw error; // Re-throw to be handled by CleanupSuggestions component
+    }
+  };
+
+  const handleRejectCleanup = (index) => {
+    onMessageLog?.(`Cleanup suggestion #${index + 1} rejected`, 'info');
   };
 
   return (
@@ -395,9 +613,36 @@ const SupabaseIntegration = ({ onMessageLog }) => {
 
       {/* Current View Description */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-        <div className="flex items-center gap-2">
-          {React.createElement(TABLE_CONFIG[currentView].icon, { size: 16, className: "text-gray-600" })}
-          <span className="font-medium text-gray-900">{TABLE_CONFIG[currentView].label}</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {React.createElement(TABLE_CONFIG[currentView].icon, { size: 16, className: "text-gray-600" })}
+            <span className="font-medium text-gray-900">{TABLE_CONFIG[currentView].label}</span>
+            {currentView === 'contacts' && contactSearchFilter && (
+              <div className="flex items-center gap-2 ml-4">
+                <span className="text-sm text-blue-600">Filtered by: "{contactSearchFilter}"</span>
+                <button
+                  onClick={() => {
+                    setContactSearchFilter('');
+                    fetchData('contacts');
+                  }}
+                  className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
+                >
+                  Clear Filter
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {/* Suggest Cleanup Button */}
+          <button
+            onClick={handleSuggestCleanup}
+            disabled={isAnalyzing || isLoading || !records || records.length === 0}
+            className="flex items-center gap-2 bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition-colors disabled:bg-orange-300 disabled:cursor-not-allowed text-sm font-medium"
+            title="Analyze table for cleanup opportunities"
+          >
+            <CleanupIcon className={`h-4 w-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
+            {isAnalyzing ? 'Analyzing...' : 'Suggest Cleanup'}
+          </button>
         </div>
         <p className="text-sm text-gray-600 mt-1">{TABLE_CONFIG[currentView].description}</p>
       </div>
@@ -409,6 +654,16 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         isLoading={isLoading}
         tableName={currentView}
       />
+      
+      {/* Cleanup Suggestions */}
+      {cleanupSuggestions && (
+        <CleanupSuggestions
+          suggestions={cleanupSuggestions}
+          onApprove={handleApproveCleanup}
+          onReject={handleRejectCleanup}
+          onMessageLog={onMessageLog}
+        />
+      )}
     </div>
   );
 };

@@ -3,3 +3,5 @@ node_modules/
 
 # Playwright authentication state
 playwright/.auth/build/
+.env
+.env.backup

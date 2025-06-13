@@ -46,15 +46,6 @@ const EmailList = ({ onMessageLog, config }) => {
 
   const saveTriageResult = async (emailId, resultData) => {
     try {
-      console.log('Saving triage result:', { emailId, resultData });
-      
-      // Ensure we have valid data before attempting to save
-      if (!emailId || !resultData) {
-        console.warn('Invalid data for triage result save:', { emailId, resultData });
-        return;
-      }
-      
-      // Convert camelCase fields to snake_case for database
       const dbData = {
         id: emailId,
         decision: resultData.decision || resultData.key_point || 'Review',
@@ -63,14 +54,25 @@ const EmailList = ({ onMessageLog, config }) => {
         key_points: Array.isArray(resultData.key_points) ? resultData.key_points : 
                    (resultData.key_points ? [resultData.key_points] : 
                    (resultData.key_point ? [resultData.key_point] : [])),
-        contact_context: resultData.contactContext || null,  // camelCase -> snake_case
-        calendar_context: resultData.calendarContext || null, // camelCase -> snake_case
+        contact_context: resultData.contactContext || null,
+        calendar_context: resultData.calendarContext || null,
         auto_drafted: resultData.draftCreated || false,
         auto_archived: resultData.autoArchived || false
       };
       
-      await supabaseService.create('triage_results', dbData);
-      console.log('Triage result saved successfully');
+      // Use upsert instead of create to handle duplicate keys
+      const { error } = await supabaseService.supabase
+        .from('triage_results')
+        .upsert(dbData, { onConflict: 'id' })
+        .select();
+      
+      if (error) throw error;
+      
+      console.log('Triage result saved successfully:', {
+        emailId,
+        confidence: dbData.confidence,
+        decision: dbData.decision
+      });
     } catch (error) {
       // Better error handling for debugging
       const errorMessage = error?.message || error?.toString() || 'Unknown error';
@@ -163,7 +165,6 @@ const EmailList = ({ onMessageLog, config }) => {
         
         if (isOutboundEmail) {
           // For outbound emails, look up the recipient in the database
-          const recipientEmails = [];
           
           // Extract recipient emails from email.to, email.cc fields if available
           // For now, we'll check if any known contacts are mentioned in the subject or body
@@ -247,6 +248,10 @@ const EmailList = ({ onMessageLog, config }) => {
         contactContext: contactContext,  // This will be mapped to contact_context in save
         calendarContext: calendarContext, // This will be mapped to calendar_context in save
         email_received_at: new Date(email.date),
+        // Add email metadata for database storage
+        email_from: email.from,
+        email_subject: email.subject,
+        email_snippet: email.snippet,
         // Ensure backward compatibility - use action_reason as summary if summary not provided
         summary: result.summary || result.action_reason || `Action: ${result.key_point}`
       };
@@ -306,11 +311,11 @@ const EmailList = ({ onMessageLog, config }) => {
             : (result.suggested_draft ? 'Draft Response Created' : 'Review Required');
             
           await supabaseService.create('activities', {
-            activity_name: activityName,
+            name: activityName,
             status: isOutboundEmail ? 'Pending Follow-up' : 'Completed',
-            related_contact_id: contactContext.id,
-            action: result.key_point,
-            next_action: nextAction
+            description: `Email ${isOutboundEmail ? 'sent to' : 'received from'} ${contactContext.name}: ${email.subject}`,
+            next_step: nextAction,
+            priority: result.confidence >= 8 ? 1 : 2
           });
           
           onMessageLog?.(`Database activity created for ${isOutboundEmail ? 'outbound email to' : 'inbound email from'} ${contactContext.name}`, 'success');

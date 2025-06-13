@@ -37,12 +37,17 @@ DATABASE SCHEMA:
 
 ### activities
 - id (int, primary key)
-- activity_name (text, required)
+- name (text, required)
 - status (text)
-- related_contact_id (int, foreign key to contacts.id)
-- action (text)
-- next_action (text)
+- description (text)
+- relationship_type_id (int, foreign key to relationship_types.id)
+- priority (int)
+- last_contact_date (date)
+- next_step (text)
+- next_step_due_date (date)
+- owner_id (int)
 - created_at (timestamp)
+- updated_at (timestamp)
 
 ### artifacts
 - id (int, primary key)
@@ -214,32 +219,91 @@ Each operation object must have these exact fields:
   async triageEmail(email, triageLogic) {
     const prompt = `${triageLogic}\n\n--- EMAIL CONTENT ---\nFrom: ${email.from}\nSubject: ${email.subject}\n\n${email.body}`;
     
-    const systemPrompt = `You are an email action decision engine. You must return a JSON object with specific action decisions, not summaries.
+    const systemPrompt = `You are an email action decision engine with database management capabilities. You must return a JSON object with both action decisions AND database entry suggestions.
 
 REQUIRED JSON FORMAT:
 {
   "key_point": "Archive|Schedule|Respond|Update_Database|Review",
   "confidence": 8,
   "action_reason": "Specific actionable next step to take",
-  "suggested_draft": "Draft text if action is Respond and confidence >= 7, otherwise null"
+  "suggested_draft": "Draft text if action is Respond and confidence >= 7, otherwise null",
+  "alternative_options": [
+    {
+      "action": "Schedule",
+      "reason": "Alternative action reason",
+      "likelihood": 30
+    }
+  ],
+  "uncertainty_factors": ["Factor 1", "Factor 2"],
+  "database_suggestions": {
+    "has_business_relevance": true,
+    "suggested_entries": [
+      {
+        "type": "contact",
+        "description": "Add John Smith from TechCorp as a new contact",
+        "data": {
+          "name": "John Smith",
+          "email": "john@techcorp.com",
+          "title": "CEO",
+          "company_name": "TechCorp"
+        }
+      },
+      {
+        "type": "company", 
+        "description": "Add TechCorp as a potential fintech partner",
+        "data": {
+          "name": "TechCorp",
+          "company_type_name": "Fintech",
+          "country": "USA"
+        }
+      },
+      {
+        "type": "activity",
+        "description": "Track follow-up meeting with TechCorp",
+        "data": {
+          "name": "TechCorp Partnership Discussion",
+          "status": "Pending",
+          "description": "Follow up on partnership opportunities discussed in email",
+          "priority": 1
+        }
+      }
+    ]
+  }
 }
 
+CONFIDENCE SCORING GUIDELINES:
+- 9-10: Very clear action, obvious next step
+- 7-8: Clear action with minor uncertainty
+- 5-6: Moderate uncertainty, multiple valid options
+- 3-4: High uncertainty, requires human judgment
+- 1-2: Very unclear, insufficient information
+
+DATABASE SUGGESTIONS GUIDELINES:
+- has_business_relevance: true if email involves customers, banks, investors, partners, prospects, vendors, or business opportunities
+- suggested_entries: Array of database entries that should be created/updated based on email content
+- Each entry should have: type (contact/company/activity), description (human-readable explanation), data (actual database fields)
+- Only suggest entries for NEW information not already in the database context
+- For contacts: extract name, email, title, company from email signature/content
+- For companies: identify company names, types (Fintech, Bank, Investor, etc.), locations
+- For activities: suggest tracking important business interactions, meetings, follow-ups
+
 CRITICAL REQUIREMENTS:
-- key_point: MUST be exactly one of the 5 values above
+- key_point: MUST be exactly one of the 5 values above (your primary recommendation)
 - confidence: MUST be a number 1-10 representing confidence in the ACTION decision
 - action_reason: MUST be a concrete next step, NOT a summary of what happened
+- database_suggestions: ALWAYS include this object, even if has_business_relevance is false
 - Return JSON only, no explanations or other text
 
-EXAMPLES OF GOOD action_reason:
-- "Follow up in 3 days to confirm meeting time"
-- "Schedule the proposed Tuesday meeting slot"
-- "Archive this automated notification"
-- "Update contact database with new job title"
+EXAMPLES OF GOOD database suggestions:
+- "Add Sarah Johnson from Goldman Sachs as a new investor contact"
+- "Create activity to track partnership discussion with Microsoft"
+- "Add Revolut as a potential integration partner company"
 
-EXAMPLES OF BAD action_reason (these are summaries, not actions):
-- "John confirmed the meeting time"
-- "This is a scheduling email"
-- "The sender provided information"`;
+FOR UNCERTAIN CASES (confidence < 7):
+- Provide 2-3 alternative_options with different actions
+- Include likelihood percentages that sum to roughly 100%
+- List specific uncertainty_factors that make the decision unclear
+- Lower confidence score appropriately (3-6 range for complex decisions)`;
 
     const payload = {
       model: this.model,
@@ -263,6 +327,24 @@ EXAMPLES OF BAD action_reason (these are summaries, not actions):
       
       // Ensure confidence is a number
       parsed.confidence = Number(parsed.confidence) || 0;
+      
+      // Ensure alternative_options exists for low confidence
+      if (parsed.confidence < 7 && !parsed.alternative_options) {
+        parsed.alternative_options = [];
+      }
+      
+      // Ensure uncertainty_factors exists for low confidence
+      if (parsed.confidence < 7 && !parsed.uncertainty_factors) {
+        parsed.uncertainty_factors = [];
+      }
+      
+      // Ensure database_suggestions exists
+      if (!parsed.database_suggestions) {
+        parsed.database_suggestions = {
+          has_business_relevance: false,
+          suggested_entries: []
+        };
+      }
       
       return parsed;
     } catch (e) {
@@ -289,6 +371,132 @@ EXAMPLES OF BAD action_reason (these are summaries, not actions):
     } catch (error) {
       console.error('[OpenAI Test] Connection failed:', error.message);
       return { success: false, error: error.message };
+    }
+  }
+
+  async analyzeTableForCleanup(tableName, tableData, relatedTables = {}) {
+    if (!this.dbSchema) {
+      throw new Error("Database schema is not set. Cannot analyze table for cleanup.");
+    }
+
+    const systemPrompt = `You are a database cleanup expert. Analyze the provided table data and suggest cleanup operations to improve data quality, remove duplicates, fix inconsistencies, and optimize relationships.
+
+Here is the database schema you are working with:
+${this.dbSchema}
+
+### Analysis Guidelines:
+1. **Duplicates**: Identify potential duplicate records based on similar names, emails, or other key fields
+2. **Inconsistencies**: Find inconsistent formatting, naming conventions, or data patterns
+3. **Missing Relationships**: Identify records that should be linked but aren't
+4. **Data Quality**: Find incomplete, outdated, or incorrectly formatted data
+5. **Optimization**: Suggest merging, updating, or reorganizing data for better structure
+
+### Response Format:
+Return a JSON object with cleanup suggestions:
+{
+  "analysis_summary": "Brief overview of issues found",
+  "total_issues": 5,
+  "cleanup_suggestions": [
+    {
+      "type": "merge_duplicates",
+      "priority": "high",
+      "description": "Merge duplicate companies: TechCorp and Tech Corp",
+      "affected_records": ["Company ID 1", "Company ID 2"],
+      "operations": [
+        {
+          "action": "update",
+          "table": "contacts",
+          "payload": {"company_id": 1},
+          "where": {"company_id": 2}
+        },
+        {
+          "action": "delete",
+          "table": "companies",
+          "where": {"id": 2}
+        }
+      ]
+    },
+    {
+      "type": "fix_inconsistency",
+      "priority": "medium",
+      "description": "Standardize company type naming",
+      "affected_records": ["Company ID 3"],
+      "operations": [
+        {
+          "action": "update",
+          "table": "companies",
+          "payload": {"company_type_name": "Fintech"},
+          "where": {"id": 3}
+        }
+      ]
+    }
+  ]
+}
+
+### Cleanup Types:
+- "merge_duplicates": Combine duplicate records
+- "fix_inconsistency": Standardize formatting or naming
+- "add_missing_relationship": Link related records
+- "update_incomplete_data": Fill in missing information
+- "remove_orphaned_data": Clean up records with broken relationships
+- "standardize_format": Fix formatting issues (emails, phone numbers, etc.)
+
+### Priority Levels:
+- "high": Critical issues affecting data integrity
+- "medium": Important improvements for consistency
+- "low": Minor optimizations
+
+CRITICAL: Return only valid JSON. No explanations or other text.`;
+
+    const userPrompt = `Analyze the ${tableName} table for cleanup opportunities.
+
+TABLE DATA:
+${JSON.stringify(tableData, null, 2)}
+
+${Object.keys(relatedTables).length > 0 ? `
+RELATED TABLES:
+${Object.entries(relatedTables).map(([name, data]) => `
+${name.toUpperCase()}:
+${JSON.stringify(data, null, 2)}
+`).join('\n')}
+` : ''}
+
+Focus on finding duplicates, inconsistencies, and data quality issues specific to this table and its relationships.`;
+
+    const payload = {
+      model: this.model,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
+    };
+
+    const result = await this._request(payload);
+    
+    try {
+      const content = result.choices[0].message.content;
+      const parsed = JSON.parse(content);
+      
+      // Validate the response has required fields
+      if (!parsed.cleanup_suggestions || !Array.isArray(parsed.cleanup_suggestions)) {
+        console.warn("AI response missing cleanup_suggestions array:", parsed);
+        throw new Error("AI response missing required cleanup_suggestions field");
+      }
+      
+      // Ensure each suggestion has required fields
+      parsed.cleanup_suggestions = parsed.cleanup_suggestions.map(suggestion => ({
+        type: suggestion.type || 'unknown',
+        priority: suggestion.priority || 'medium',
+        description: suggestion.description || 'No description provided',
+        affected_records: suggestion.affected_records || [],
+        operations: suggestion.operations || []
+      }));
+      
+      return parsed;
+    } catch (e) {
+      console.error("Failed to parse JSON from OpenAI response for cleanup analysis:", e);
+      throw new Error("AI did not return valid JSON for cleanup analysis.");
     }
   }
 }
