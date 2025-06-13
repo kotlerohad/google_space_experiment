@@ -451,6 +451,130 @@ class EmailService {
     return data.items || [];
   }
 
+  async getDetailedCalendarInfo(daysAhead = 7) {
+    await this.ensureValidToken();
+    
+    const now = new Date();
+    const endDate = new Date();
+    endDate.setDate(now.getDate() + daysAhead);
+    
+    const timeMin = now.toISOString();
+    const timeMax = endDate.toISOString();
+    
+    const response = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+      `timeMin=${encodeURIComponent(timeMin)}&` +
+      `timeMax=${encodeURIComponent(timeMax)}&` +
+      `singleEvents=true&orderBy=startTime&maxResults=50`,
+      {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      }
+    );
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch detailed calendar events.');
+    }
+    
+    const data = await response.json();
+    const events = data.items || [];
+    
+    // Process events to extract busy times
+    const busyTimes = events
+      .filter(event => event.start && event.end)
+      .map(event => ({
+        title: event.summary || 'Busy',
+        start: new Date(event.start.dateTime || event.start.date),
+        end: new Date(event.end.dateTime || event.end.date),
+        isAllDay: !event.start.dateTime
+      }))
+      .sort((a, b) => a.start - b.start);
+    
+    // Generate available time slots (9 AM - 6 PM, weekdays)
+    const availableSlots = this.generateAvailableTimeSlots(busyTimes, daysAhead);
+    
+    return {
+      totalEvents: events.length,
+      busyTimes,
+      availableSlots,
+      timeRange: {
+        start: timeMin,
+        end: timeMax
+      }
+    };
+  }
+
+  generateAvailableTimeSlots(busyTimes, daysAhead = 7) {
+    const slots = [];
+    const now = new Date();
+    
+    for (let day = 0; day < daysAhead; day++) {
+      const currentDate = new Date(now);
+      currentDate.setDate(now.getDate() + day);
+      
+      // Skip weekends
+      if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
+        continue;
+      }
+      
+      // Skip past days or current day if it's past 5 PM
+      if (day === 0 && now.getHours() >= 17) {
+        continue;
+      }
+      
+      // Generate time slots from 9 AM to 6 PM (30-minute slots)
+      const startHour = day === 0 ? Math.max(9, now.getHours() + 1) : 9;
+      const endHour = 18;
+      
+      for (let hour = startHour; hour < endHour; hour++) {
+        for (let minute = 0; minute < 60; minute += 30) {
+          const slotStart = new Date(currentDate);
+          slotStart.setHours(hour, minute, 0, 0);
+          
+          const slotEnd = new Date(slotStart);
+          slotEnd.setMinutes(slotStart.getMinutes() + 30);
+          
+          // Check if this slot conflicts with any busy time
+          const isConflict = busyTimes.some(busy => {
+            if (busy.isAllDay) {
+              return slotStart.toDateString() === busy.start.toDateString();
+            }
+            return (slotStart < busy.end && slotEnd > busy.start);
+          });
+          
+          if (!isConflict) {
+            slots.push({
+              start: slotStart,
+              end: slotEnd,
+              formatted: this.formatTimeSlot(slotStart, slotEnd)
+            });
+          }
+        }
+      }
+    }
+    
+    return slots.slice(0, 10); // Return first 10 available slots
+  }
+
+  formatTimeSlot(start, end) {
+    const options = {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    };
+    
+    const startStr = start.toLocaleDateString('en-US', options);
+    const endStr = end.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+    
+    return `${startStr} - ${endStr}`;
+  }
+
   async markAsSpam(emailId) {
     await this.ensureValidToken();
     const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${emailId}/modify`, {

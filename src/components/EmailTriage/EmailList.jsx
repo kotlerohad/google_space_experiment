@@ -226,16 +226,47 @@ const EmailList = ({ onMessageLog, config }) => {
           email.body.toLowerCase().includes('calendar') ||
           email.body.toLowerCase().includes('meeting')) {
         try {
-          const events = await emailService.testCalendarConnection();
-          calendarContext = `Your calendar has ${events.length} upcoming events in the next few days.`;
-          onMessageLog?.(`Calendar context added for scheduling email`, 'info');
+          onMessageLog?.(`Fetching detailed calendar information for scheduling email...`, 'info');
+          const calendarInfo = await emailService.getDetailedCalendarInfo(7);
+          
+          const availableSlotsList = calendarInfo.availableSlots
+            .slice(0, 5) // Show first 5 available slots
+            .map(slot => slot.formatted)
+            .join(', ');
+          
+          calendarContext = {
+            summary: `Your calendar has ${calendarInfo.totalEvents} events in the next 7 days.`,
+            availableSlots: calendarInfo.availableSlots.slice(0, 5),
+            busyCount: calendarInfo.busyTimes.length,
+            availableSlotsList
+          };
+          
+          onMessageLog?.(`Calendar context added: ${calendarInfo.availableSlots.length} available slots found`, 'info');
         } catch (error) {
-          console.warn('Calendar check failed:', error);
+          console.warn('Detailed calendar check failed, falling back to basic check:', error);
+          try {
+            const events = await emailService.testCalendarConnection();
+            calendarContext = {
+              summary: `Your calendar has ${events.length} upcoming events in the next few days.`,
+              availableSlots: [],
+              busyCount: events.length,
+              availableSlotsList: 'Unable to fetch specific available times'
+            };
+            onMessageLog?.(`Basic calendar context added for scheduling email`, 'info');
+          } catch (fallbackError) {
+            console.warn('Calendar check failed completely:', fallbackError);
+          }
         }
       }
 
       if (calendarContext) {
-        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext} When suggesting meeting times, consider your existing schedule.`;
+        enhancedTriageLogic += `\n\nCALENDAR CONTEXT: ${calendarContext.summary}`;
+        if (calendarContext.availableSlots.length > 0) {
+          enhancedTriageLogic += `\n\nAVAILABLE TIME SLOTS: ${calendarContext.availableSlotsList}`;
+          enhancedTriageLogic += `\n\nIMPORTANT: When suggesting meeting times in your response, use these specific available time slots. Include 2-3 specific time options in your suggested draft response.`;
+        } else {
+          enhancedTriageLogic += `\n\nNote: ${calendarContext.availableSlotsList}. When suggesting meeting times, ask the sender for their availability.`;
+        }
       }
 
       const result = await openAIService.triageEmail(email, enhancedTriageLogic);

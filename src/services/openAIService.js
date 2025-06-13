@@ -278,6 +278,37 @@ CONFIDENCE SCORING GUIDELINES:
 - 3-4: High uncertainty, requires human judgment
 - 1-2: Very unclear, insufficient information
 
+CALENDAR-AWARE SCHEDULING GUIDELINES:
+- When AVAILABLE TIME SLOTS are provided in the context, ALWAYS use them in your suggested_draft
+- For scheduling emails, include 2-3 specific time options from the available slots
+- Format time suggestions clearly: "I'm available on [Day, Date] at [Time]"
+- If no specific slots are available, ask for the sender's availability
+- Use "Schedule" as key_point for meeting coordination emails
+- Set confidence to 8-9 for scheduling emails when calendar context is available
+
+DRAFT CREATION FOR SCHEDULING:
+- Start with a professional greeting
+- Acknowledge the meeting request
+- Provide 2-3 specific available time options when calendar data is available
+- Include meeting duration if mentioned in original email
+- End with a request for confirmation
+- Keep tone professional but friendly
+
+EXAMPLE SCHEDULING DRAFT (when calendar slots available):
+"Hi [Name],
+
+Thank you for reaching out about scheduling a meeting. I'd be happy to discuss [topic].
+
+I have the following times available:
+• [Specific time slot 1]
+• [Specific time slot 2] 
+• [Specific time slot 3]
+
+Please let me know which works best for you, and I'll send a calendar invitation.
+
+Best regards,
+[Your name]"
+
 DATABASE SUGGESTIONS GUIDELINES:
 - has_business_relevance: true if email involves customers, banks, investors, partners, prospects, vendors, or business opportunities
 - suggested_entries: Array of database entries that should be created/updated based on email content
