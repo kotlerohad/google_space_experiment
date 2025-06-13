@@ -303,36 +303,47 @@ class EmailService {
   // --- Main API Methods ---
 
   parseEmailMessage(message) {
+    // Handle error responses from Gmail API
+    if (message && message.error) {
+      console.warn('Gmail API returned error for message:', message.error);
+      return null;
+    }
+    
     if (!message || !message.payload) {
-      console.warn('Skipping malformed message object:', message);
+      console.warn('Skipping message with missing payload:', message?.id || 'unknown');
       return null;
     }
 
-    const headers = message.payload.headers || [];
-    const getHeader = (name) => {
-      const header = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
-      return header ? header.value : '';
-    };
+    try {
+      const headers = message.payload.headers || [];
+      const getHeader = (name) => {
+        const header = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+        return header ? header.value : '';
+      };
 
-    let body = '';
-    if (message.payload.parts) {
-      const part = message.payload.parts.find(p => p.mimeType === 'text/plain') || message.payload.parts[0];
-       if (part && part.body && part.body.data) {
-        body = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      let body = '';
+      if (message.payload.parts) {
+        const part = message.payload.parts.find(p => p.mimeType === 'text/plain') || message.payload.parts[0];
+         if (part && part.body && part.body.data) {
+          body = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+        }
+      } else if (message.payload.body && message.payload.body.data) {
+        body = atob(message.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
       }
-    } else if (message.payload.body && message.payload.body.data) {
-      body = atob(message.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-    }
 
-    return {
-      id: message.id,
-      threadId: message.threadId,
-      from: getHeader('From'),
-      subject: getHeader('Subject'),
-      date: getHeader('Date'),
-      snippet: message.snippet,
-      body: body.substring(0, 2000), // Truncate for performance
-    };
+      return {
+        id: message.id,
+        threadId: message.threadId,
+        from: getHeader('From'),
+        subject: getHeader('Subject'),
+        date: getHeader('Date'),
+        snippet: message.snippet || '',
+        body: body.substring(0, 2000), // Truncate for performance
+      };
+    } catch (error) {
+      console.warn('Failed to parse email message:', error.message, 'Message ID:', message?.id);
+      return null;
+    }
   }
 
   async fetchEmails(maxResults = 20) {
@@ -346,48 +357,51 @@ class EmailService {
     const listData = await listResponse.json();
     if (!listData.messages || listData.messages.length === 0) return [];
 
-    // 2. Create a batch request to get details for all messages
-    const boundary = 'batch_boundary';
-    let batchRequestBody = '';
-    listData.messages.forEach(msg => {
-      batchRequestBody += `--${boundary}\n`;
-      batchRequestBody += `Content-Type: application/http\n\n`;
-      batchRequestBody += `GET /gmail/v1/users/me/messages/${msg.id}?format=full\n\n`;
-    });
-    batchRequestBody += `--${boundary}--`;
-
-    // 3. Execute the batch request
-    const batchResponse = await fetch('https://www.googleapis.com/batch/gmail/v1', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
-        'Content-Type': `multipart/mixed; boundary=${boundary}`
-      },
-      body: batchRequestBody
-    });
-    if (!batchResponse.ok) throw new Error('Batch email fetch failed.');
-
-    // 4. Parse the multipart batch response
-    const responseText = await batchResponse.text();
-    const parts = responseText.split('--batch_');
-    const emails = parts
-      .filter(part => part.includes('Content-Type: application/json'))
-      .map(part => {
-        const jsonStart = part.indexOf('{');
-        const jsonEnd = part.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd !== -1) {
-          try {
-            const jsonString = part.substring(jsonStart, jsonEnd + 1);
-            const message = JSON.parse(jsonString);
-            return this.parseEmailMessage(message);
-          } catch (e) {
-            console.error('Failed to parse message from batch response:', e);
-            return null;
+    // 2. Fetch email details sequentially with rate limiting to avoid 429 errors
+    const emails = [];
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    for (let i = 0; i < listData.messages.length; i++) {
+      const msg = listData.messages[i];
+      
+      try {
+        const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+          headers: { 'Authorization': `Bearer ${this.accessToken}` }
+        });
+        
+        if (!response.ok) {
+          if (response.status === 429) {
+            console.warn(`Rate limited on message ${i + 1}/${listData.messages.length}. Waiting 2 seconds...`);
+            await delay(2000);
+            // Retry the request
+            const retryResponse = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+              headers: { 'Authorization': `Bearer ${this.accessToken}` }
+            });
+            if (retryResponse.ok) {
+              const message = await retryResponse.json();
+              const parsedEmail = this.parseEmailMessage(message);
+              if (parsedEmail) emails.push(parsedEmail);
+            }
           }
+          continue;
         }
-        return null;
-      })
-      .filter(Boolean); // Filter out any nulls from parsing errors
+        
+        const message = await response.json();
+        const parsedEmail = this.parseEmailMessage(message);
+        if (parsedEmail) {
+          emails.push(parsedEmail);
+        }
+        
+        // Add small delay between requests to be respectful to the API
+        if (i < listData.messages.length - 1) {
+          await delay(100);
+        }
+        
+      } catch (error) {
+        console.warn(`Failed to fetch message ${msg.id}:`, error.message);
+        continue;
+      }
+    }
 
     return emails;
   }
