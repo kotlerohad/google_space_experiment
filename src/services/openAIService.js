@@ -227,6 +227,8 @@ REQUIRED JSON FORMAT:
   "confidence": 8,
   "action_reason": "Specific actionable next step to take",
   "suggested_draft": "Draft text if action is Respond and confidence >= 7, otherwise null",
+  "suggested_draft_pushy": "More assertive draft pushing for next steps (scheduling, decisions, etc.)",
+  "suggested_draft_exploratory": "More exploratory draft asking questions and gathering information",
   "alternative_options": [
     {
       "action": "Schedule",
@@ -294,29 +296,39 @@ DRAFT CREATION FOR SCHEDULING:
 - End with a request for confirmation
 - Keep tone professional but friendly
 
-EXAMPLE SCHEDULING DRAFT (when calendar slots available):
-"Hi [Name],
+DUAL DRAFT CREATION:
+- suggested_draft: Use this for the primary/default draft (backward compatibility)
+- suggested_draft_pushy: More assertive, action-oriented draft that pushes for next steps
+  * For scheduling: Offer specific times and ask for immediate confirmation
+  * For business discussions: Push for decisions, next meetings, or commitments
+  * Use phrases like "I'd like to move forward with...", "Let's schedule...", "Can we confirm..."
+- suggested_draft_exploratory: More open-ended, information-gathering draft
+  * Ask clarifying questions about their needs, timeline, or requirements
+  * Explore potential collaboration areas or understand their situation better
+  * Use phrases like "Could you tell me more about...", "I'm curious about...", "What are your thoughts on..."
 
-Thank you for reaching out about scheduling a meeting. I'd be happy to discuss [topic].
+EXAMPLE DUAL DRAFTS:
+Pushy: "Hi [Name], I'd like to schedule our discussion about [topic]. I have these times available: [times]. Can we confirm one of these slots by end of day?"
 
-I have the following times available:
-• [Specific time slot 1]
-• [Specific time slot 2] 
-• [Specific time slot 3]
-
-Please let me know which works best for you, and I'll send a calendar invitation.
-
-Best regards,
-[Your name]"
+Exploratory: "Hi [Name], Thank you for reaching out about [topic]. Could you tell me more about your specific needs and timeline? I'd love to understand how we might collaborate effectively."
 
 DATABASE SUGGESTIONS GUIDELINES:
 - has_business_relevance: true if email involves customers, banks, investors, partners, prospects, vendors, or business opportunities
 - suggested_entries: Array of database entries that should be created/updated based on email content
 - Each entry should have: type (contact/company/activity), description (human-readable explanation), data (actual database fields)
-- Only suggest entries for NEW information not already in the database context
+- CRITICAL: Only suggest entries for NEW information not already in the database context
+- DUPLICATE PREVENTION: If SENDER CONTEXT or RECIPIENT CONTEXT shows the person/company already exists, do NOT suggest adding them again
 - For contacts: extract name, email, title, company from email signature/content
 - For companies: identify company names, types (Fintech, Bank, Investor, etc.), locations
 - For activities: suggest tracking important business interactions, meetings, follow-ups
+- EXISTING DATA CHECK: If the email context shows existing contact/company information, focus on activity suggestions instead
+
+DUPLICATE PREVENTION RULES:
+- If SENDER CONTEXT shows "known contact" - do NOT suggest adding that contact again
+- If RECIPIENT CONTEXT shows "known contact" - do NOT suggest adding that contact again  
+- If company is mentioned in existing contact context - do NOT suggest adding that company again
+- Focus on NEW contacts, companies, or activities not already captured in the database
+- When in doubt, suggest activities to track the interaction rather than duplicate entries
 
 CRITICAL REQUIREMENTS:
 - key_point: MUST be exactly one of the 5 values above (your primary recommendation)

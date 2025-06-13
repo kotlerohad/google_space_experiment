@@ -7,15 +7,20 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
 
-  const handleCreateDraft = async () => {
+  const handleCreateDraft = async (draft, type = null) => {
     setIsDrafting(true);
     try {
       const subject = `Re: ${email.subject}`;
       await onEmailAction(email.id, 'create_draft', {
         to: email.from,
         subject: subject,
-        body: result.suggested_draft
+        body: draft
       });
+      if (type) {
+        onMessageLog?.(`${type.charAt(0).toUpperCase() + type.slice(1)} draft created`, 'success');
+      } else {
+        onMessageLog?.(`Draft created`, 'success');
+      }
     } catch (error) {
       onMessageLog?.(`Failed to create draft: ${error.message}`, 'error');
     } finally {
@@ -494,7 +499,54 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
           {result.key_point === 'Respond' && (
             <div>
               <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Response Action</h4>
-              {result.suggested_draft ? (
+              
+              {/* Dual Draft Options */}
+              {(result.suggested_draft_pushy || result.suggested_draft_exploratory) ? (
+                <div className="space-y-3">
+                  {/* Pushy Draft */}
+                  {result.suggested_draft_pushy && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h5 className="text-xs font-medium text-orange-700">🚀 Pushy (Next Steps)</h5>
+                        <span className="text-xs text-orange-600 bg-orange-100 px-1 rounded">Action-Oriented</span>
+                      </div>
+                      <div className="p-2 border border-orange-200 rounded-md bg-orange-50 text-xs text-gray-700 max-h-24 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_pushy}</pre>
+                      </div>
+                      <button
+                        onClick={() => handleCreateDraft(result.suggested_draft_pushy, 'pushy')}
+                        disabled={isDrafting}
+                        className="w-full mt-1 text-xs bg-orange-600 text-white px-2 py-1 rounded hover:bg-orange-700 flex items-center justify-center gap-1 disabled:bg-orange-300"
+                      >
+                        <SparklesIcon className="h-3 w-3" />
+                        {isDrafting ? 'Creating...' : 'Create Pushy Draft'}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Exploratory Draft */}
+                  {result.suggested_draft_exploratory && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h5 className="text-xs font-medium text-blue-700">🔍 Exploratory</h5>
+                        <span className="text-xs text-blue-600 bg-blue-100 px-1 rounded">Information-Gathering</span>
+                      </div>
+                      <div className="p-2 border border-blue-200 rounded-md bg-blue-50 text-xs text-gray-700 max-h-24 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_exploratory}</pre>
+                      </div>
+                      <button
+                        onClick={() => handleCreateDraft(result.suggested_draft_exploratory, 'exploratory')}
+                        disabled={isDrafting}
+                        className="w-full mt-1 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
+                      >
+                        <SparklesIcon className="h-3 w-3" />
+                        {isDrafting ? 'Creating...' : 'Create Exploratory Draft'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : result.suggested_draft ? (
+                /* Fallback to single draft for backward compatibility */
                 <>
                   <div className="p-2 border rounded-md bg-white text-xs text-gray-700 max-h-24 overflow-y-auto">
                     <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft}</pre>
@@ -506,7 +558,7 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
                     </div>
                   ) : (
                     <button
-                      onClick={handleCreateDraft}
+                      onClick={() => handleCreateDraft(result.suggested_draft)}
                       disabled={isDrafting}
                       className="w-full mt-2 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
                     >
@@ -517,6 +569,13 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
                 </>
               ) : (
                 <p className="text-xs text-gray-500 italic">Response needed but no draft suggested (confidence &lt;7)</p>
+              )}
+              
+              {/* Auto-draft status for dual drafts */}
+              {result.draftCreated && (result.suggested_draft_pushy || result.suggested_draft_exploratory) && (
+                <div className="mt-2 p-2 bg-green-100 border border-green-200 rounded text-xs text-green-800">
+                  ✓ Draft auto-created (confidence ≥7)
+                </div>
               )}
             </div>
           )}

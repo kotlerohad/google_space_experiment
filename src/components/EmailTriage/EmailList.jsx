@@ -313,18 +313,24 @@ const EmailList = ({ onMessageLog, config }) => {
       }
 
       // Step 5: Auto-draft creation (per guidance: confidence 7+ for drafts)
-      if (result.suggested_draft && result.confidence >= 7) {
+      if ((result.suggested_draft_pushy || result.suggested_draft_exploratory || result.suggested_draft) && result.confidence >= 7) {
         onMessageLog?.(`High confidence draft suggestion (${result.confidence}/10). Auto-creating draft...`, 'info');
         try {
           const subject = `Re: ${email.subject}`;
-          await emailService.createDraft(email.from.match(/<([^>]+)>/)?.[1] || email.from, subject, result.suggested_draft);
+          
+          // Prefer pushy draft for auto-creation, then exploratory, then fallback to single draft
+          const draftContent = result.suggested_draft_pushy || result.suggested_draft_exploratory || result.suggested_draft;
+          const draftType = result.suggested_draft_pushy ? 'pushy' : 
+                           result.suggested_draft_exploratory ? 'exploratory' : 'standard';
+          
+          await emailService.createDraft(email.from.match(/<([^>]+)>/)?.[1] || email.from, subject, draftContent);
           
           setTriageResults(prev => ({
             ...prev,
             [email.id]: { ...prev[email.id], draftCreated: true }
           }));
           
-          onMessageLog?.(`Draft auto-created for "${email.subject}"`, 'success');
+          onMessageLog?.(`${draftType.charAt(0).toUpperCase() + draftType.slice(1)} draft auto-created for "${email.subject}"`, 'success');
         } catch (error) {
           onMessageLog?.(`Failed to auto-create draft: ${error.message}`, 'error');
         }
@@ -339,7 +345,7 @@ const EmailList = ({ onMessageLog, config }) => {
             
           const nextAction = isOutboundEmail
             ? (result.action_reason || 'Follow up required')
-            : (result.suggested_draft ? 'Draft Response Created' : 'Review Required');
+            : ((result.suggested_draft_pushy || result.suggested_draft_exploratory || result.suggested_draft) ? 'Draft Response Created' : 'Review Required');
             
           await supabaseService.create('activities', {
             name: activityName,
