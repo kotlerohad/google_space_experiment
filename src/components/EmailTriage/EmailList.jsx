@@ -6,7 +6,7 @@ import emailService from '../../services/emailService';
 import supabaseService from '../../services/supabaseService';
 
 const EmailList = ({ onMessageLog, config }) => {
-  const { isConfigLoaded, openAIService } = useContext(AppContext);
+  const { isConfigLoaded, openAIService, config: contextConfig } = useContext(AppContext);
   const [emails, setEmails] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -34,6 +34,14 @@ const EmailList = ({ onMessageLog, config }) => {
     }
   }, [isConfigLoaded, loadTriageLogic]);
 
+  // Auto-fetch emails on initial load if Gmail is already authenticated
+  useEffect(() => {
+    if (isConfigLoaded && oauthStatus.hasAccessToken && emails.length === 0 && !isLoading && !error) {
+      console.log('📧 App loaded with Gmail auth - auto-fetching emails...');
+      fetchEmails();
+    }
+  }, [isConfigLoaded, oauthStatus.hasAccessToken, emails.length, isLoading, error]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Debug effect to check OpenAI service status
   useEffect(() => {
     if (isConfigLoaded) {
@@ -49,7 +57,17 @@ const EmailList = ({ onMessageLog, config }) => {
   useEffect(() => {
     const checkOAuthStatus = () => {
       const newStatus = emailService.getOAuthStatus();
+      const previousStatus = oauthStatus;
       setOauthStatus(newStatus);
+      
+      // Auto-fetch emails when Gmail auth becomes green and we don't have emails yet
+      if (newStatus.hasAccessToken && 
+          (!previousStatus?.hasAccessToken || emails.length === 0) && 
+          !isLoading && 
+          !error) {
+        console.log('📧 Gmail auth is green - auto-fetching emails...');
+        fetchEmails();
+      }
     };
 
     // Check OAuth status immediately
@@ -72,7 +90,7 @@ const EmailList = ({ onMessageLog, config }) => {
       clearInterval(interval);
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, []);
+  }, [emails.length, isLoading, error, oauthStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveTriageResult = async (emailId, resultData) => {
     try {
@@ -136,16 +154,68 @@ const EmailList = ({ onMessageLog, config }) => {
     }
   };
 
+  const loadStoredTriageResults = async (emailIds) => {
+    if (!isConfigLoaded || !supabaseService.isConnected() || emailIds.length === 0) {
+      return {};
+    }
+
+    try {
+      onMessageLog?.('Loading stored triage results...', 'info');
+      
+      const { data: storedResults, error } = await supabaseService.supabase
+        .from('triage_results')
+        .select('*')
+        .in('id', emailIds);
+
+      if (error) throw error;
+
+      // Convert array to object keyed by email ID
+      const triageResultsMap = {};
+      storedResults?.forEach(result => {
+        triageResultsMap[result.id] = {
+          key_point: result.decision,
+          confidence: result.confidence,
+          action_reason: result.action_reason,
+          summary: result.action_reason, // For backward compatibility
+          contactContext: result.contact_context,
+          calendarContext: result.calendar_context,
+          autoArchived: result.auto_archived,
+          draftCreated: result.auto_drafted,
+          timestamp: new Date(result.created_at),
+          isLoading: false,
+          // Add stored flag to distinguish from fresh triage
+          isStored: true,
+          storedAt: result.created_at
+        };
+      });
+
+      onMessageLog?.(`Loaded ${Object.keys(triageResultsMap).length} stored triage results`, 'success');
+      return triageResultsMap;
+    } catch (error) {
+      console.warn('Failed to load stored triage results:', error);
+      onMessageLog?.(`Warning: Could not load stored triage results: ${error.message}`, 'warning');
+      return {};
+    }
+  };
+
   const fetchEmails = async () => {
     setIsLoading(true);
     setError(null);
     setEmails([]);
+    setTriageResults({}); // Clear existing triage results
 
     try {
       onMessageLog?.('Fetching emails from Gmail...', 'info');
       const fetchedEmails = await emailService.fetchEmails(50);
       setEmails(fetchedEmails);
       onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
+      
+      // Load stored triage results for these emails
+      if (fetchedEmails.length > 0) {
+        const emailIds = fetchedEmails.map(email => email.id);
+        const storedTriageResults = await loadStoredTriageResults(emailIds);
+        setTriageResults(storedTriageResults);
+      }
       
       // Update OAuth status after successful fetch
       setOauthStatus(emailService.getOAuthStatus());
@@ -168,13 +238,31 @@ const EmailList = ({ onMessageLog, config }) => {
     console.log('Triage Debug:', {
       openAIService: !!openAIService,
       isConfigLoaded,
-      hasApiKey: openAIService?.apiKey ? 'Yes' : 'No'
+      hasApiKey: openAIService?.apiKey ? 'Yes' : 'No',
+      apiKeyLength: openAIService?.apiKey?.length || 0,
+      configOpenAIKey: config?.openaiApiKey ? 'Present' : 'Missing',
+      contextConfigOpenAIKey: contextConfig?.openaiApiKey ? 'Present' : 'Missing'
     });
     
     if (!openAIService || !isConfigLoaded) {
       setTriageResults(prev => ({ 
         ...prev, 
         [email.id]: { error: 'OpenAI service not available. Please check your API key configuration.', isLoading: false } 
+      }));
+      return;
+    }
+
+    // Ensure API key is set (defensive programming)
+    const availableConfig = config || contextConfig;
+    if (!openAIService.apiKey && availableConfig?.openaiApiKey) {
+      console.log('🔧 Setting OpenAI API key from config in triage handler');
+      openAIService.setApiKey(availableConfig.openaiApiKey);
+    }
+
+    if (!openAIService.apiKey) {
+      setTriageResults(prev => ({ 
+        ...prev, 
+        [email.id]: { error: 'OpenAI API key is not set. Please check your configuration.', isLoading: false } 
       }));
       return;
     }
@@ -623,6 +711,11 @@ This information would be used to craft more informed and strategic responses th
                 </span>
                 <span className="text-sm text-gray-500">
                   {Object.keys(triageResults).filter(id => triageResults[id]?.key_point).length} actions decided
+                  {Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length > 0 && (
+                    <span className="ml-2 text-xs text-blue-600">
+                      ({Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length} from storage)
+                    </span>
+                  )}
                 </span>
               </div>
               <button
@@ -700,9 +793,16 @@ This information would be used to craft more informed and strategic responses th
                               ✓ Executed: Draft Created
                             </span>
                           ) : triageResults[email.id]?.key_point ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                              Action: {triageResults[email.id].key_point}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                Action: {triageResults[email.id].key_point}
+                              </span>
+                              {triageResults[email.id]?.isStored && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Loaded from database">
+                                  📁
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                               Pending Action

@@ -10,7 +10,7 @@ Create a new file at `src/services/openAIService.js` with the following content.
 class OpenAIService {
   constructor() {
     this.apiKey = null;
-    this.model = 'gpt-4o';
+    this.model = 'gpt-4.1';
     this.dbSchema = ''; // To be set by the App
   }
 

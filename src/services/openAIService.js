@@ -1,7 +1,7 @@
 class OpenAIService {
   constructor() {
     this.apiKey = null;
-    this.model = 'gpt-4o';
+    this.model = 'gpt-4.1';
     this.dbSchema = this.getDefaultDbSchema(); // Set default schema
   }
 
@@ -235,7 +235,7 @@ Each operation object must have these exact fields:
       }
     }
 
-    const systemPrompt = `You are an email action decision engine with database management capabilities. You must return a JSON object with both action decisions AND database entry suggestions.
+    const systemPrompt = `You are an email action decision engine with database management capabilities. You must return a JSON object with both action decisions AND database entry suggestions AND debug information.
 
 REQUIRED JSON FORMAT:
 {
@@ -265,29 +265,65 @@ REQUIRED JSON FORMAT:
           "title": "CEO",
           "company_name": "TechCorp"
         }
-      },
-      {
-        "type": "company", 
-        "description": "Add TechCorp as a potential fintech partner",
-        "data": {
-          "name": "TechCorp",
-          "company_type_name": "Fintech",
-          "country": "USA"
-        }
-      },
-      {
-        "type": "activity",
-        "description": "Track follow-up meeting with TechCorp",
-        "data": {
-          "name": "TechCorp Partnership Discussion",
-          "status": "Pending",
-          "description": "Follow up on partnership opportunities discussed in email",
-          "priority": 1
-        }
       }
     ]
+  },
+  "participants": {
+    "sender": {
+      "name": "John Smith",
+      "email": "john@techcorp.com",
+      "company": "TechCorp",
+      "extracted_from": "email_signature"
+    },
+    "recipients": [
+      {
+        "name": "Ohad Kotler",
+        "email": "ohad@tweezr.com",
+        "company": "Tweezr"
+      }
+    ]
+  },
+  "database_insights": {
+    "contact_exists": true,
+    "company_exists": false,
+    "recent_interactions": [
+      {
+        "type": "email",
+        "date": "2024-01-15",
+        "summary": "Previous discussion about partnership"
+      }
+    ],
+    "context_used": "Found sender in contacts database with 3 previous interactions"
+  },
+  "examples": {
+    "similar_cases": [
+      {
+        "email_type": "partnership_inquiry",
+        "action_taken": "Schedule",
+        "reason": "Similar business development emails typically require scheduling"
+      }
+    ],
+    "patterns_matched": ["business_inquiry", "meeting_request"]
+  },
+  "activated_agents": [
+    "participant_extractor",
+    "database_lookup",
+    "calendar_checker",
+    "draft_generator"
+  ],
+  "agent_prompts": {
+    "main": "Analyze this email for business relevance and determine next action",
+    "context": "Email from potential business partner requesting meeting",
+    "examples": "Similar partnership emails in the past resulted in successful meetings"
   }
 }
+
+DEBUG INFORMATION REQUIREMENTS:
+- participants: Extract sender and recipient information from email headers and signatures
+- database_insights: Report what was found in database lookups and how it influenced the decision
+- examples: Identify similar email patterns and how they were handled
+- activated_agents: List which processing agents were used (participant_extractor, database_lookup, calendar_checker, draft_generator, etc.)
+- agent_prompts: Show the key prompts and context used for decision making
 
 CONFIDENCE SCORING GUIDELINES:
 - 9-10: Very clear action, obvious next step
@@ -373,6 +409,11 @@ CRITICAL REQUIREMENTS:
 - suggested_draft_exploratory: REQUIRED when key_point is "Respond" AND confidence >= 4
 - suggested_draft: Use for backward compatibility (can be same as pushy or exploratory)
 - database_suggestions: ALWAYS include this object, even if has_business_relevance is false
+- participants: ALWAYS extract sender and recipient information
+- database_insights: ALWAYS report database lookup results
+- examples: ALWAYS identify similar patterns
+- activated_agents: ALWAYS list processing agents used
+- agent_prompts: ALWAYS show key prompts used
 - Return JSON only, no explanations or other text
 
 EXAMPLES OF GOOD database suggestions:
@@ -426,6 +467,42 @@ FOR UNCERTAIN CASES (confidence < 7):
         parsed.database_suggestions = {
           has_business_relevance: false,
           suggested_entries: []
+        };
+      }
+      
+      // Ensure debug information exists
+      if (!parsed.participants) {
+        parsed.participants = {
+          sender: { name: "Unknown", email: "Unknown", company: "Unknown" },
+          recipients: []
+        };
+      }
+      
+      if (!parsed.database_insights) {
+        parsed.database_insights = {
+          contact_exists: false,
+          company_exists: false,
+          recent_interactions: [],
+          context_used: "No database context available"
+        };
+      }
+      
+      if (!parsed.examples) {
+        parsed.examples = {
+          similar_cases: [],
+          patterns_matched: []
+        };
+      }
+      
+      if (!parsed.activated_agents) {
+        parsed.activated_agents = ["basic_triage"];
+      }
+      
+      if (!parsed.agent_prompts) {
+        parsed.agent_prompts = {
+          main: "Basic email triage",
+          context: "No specific context",
+          examples: "No examples used"
         };
       }
       

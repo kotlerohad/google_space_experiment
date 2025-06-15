@@ -17,13 +17,19 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "npm run prestart && react-scripts start",
+    "start:dev": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "test:quick": "react-scripts test --watchAll=false --testPathPattern=\"(openAIService|triageIntegration|triageStorage|modelConfig|DebugWindow|TriageResult).test.js\"",
     "test:e2e": "playwright test",
     "test:backend": "node test_backend.js",
     "oauth": "node run_oauth.js",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "lint": "eslint src --ext .js,.jsx --max-warnings 0",
+    "lint:fix": "eslint src --ext .js,.jsx --fix",
+    "prestart": "npm run lint && npm run test:quick && npm run build:check",
+    "build:check": "npm run build"
   },
   "eslintConfig": {
     "extends": [
