@@ -5,3 +5,4 @@ node_modules/
 playwright/.auth/build/
 .env
 .env.backup
+build/

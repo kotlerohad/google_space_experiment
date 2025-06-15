@@ -732,7 +732,7 @@ This information would be used to craft more informed and strategic responses th
                       </tr>
                       
                       {/* Triage Result Row */}
-                      {triageResults[email.id] && (triageResults[email.id].summary || triageResults[email.id].error) && (
+                      {triageResults[email.id] && (triageResults[email.id].summary || triageResults[email.id].action_reason || triageResults[email.id].key_point || triageResults[email.id].error) && (
                         <tr className="bg-gray-50">
                           <td colSpan="6" className="px-4 py-3">
                             <TriageResult
