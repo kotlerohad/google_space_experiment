@@ -153,19 +153,36 @@ const DebugWindow = ({ triageResult, email, openAIService, onCollapse }) => {
       <div className="space-y-2">
         <h4 className="text-sm font-semibold">Draft Email Content</h4>
         <div className="bg-gray-50 p-2 rounded">
-          {triageResult.suggested_draft_pushy && (
+          {triageResult.suggested_draft_option_1 && (
+            <div className="mb-2">
+              <h5 className="text-xs font-medium text-purple-700">
+                Option 1 ({triageResult.draft_approach_1 || 'Unknown'})
+              </h5>
+              <pre className="text-xs whitespace-pre-wrap">{triageResult.suggested_draft_option_1}</pre>
+            </div>
+          )}
+          {triageResult.suggested_draft_option_2 && (
+            <div className="mb-2">
+              <h5 className="text-xs font-medium text-blue-700">
+                Option 2 ({triageResult.draft_approach_2 || 'Unknown'})
+              </h5>
+              <pre className="text-xs whitespace-pre-wrap">{triageResult.suggested_draft_option_2}</pre>
+            </div>
+          )}
+          {/* Fallback to old format for backward compatibility */}
+          {triageResult.suggested_draft_pushy && !triageResult.suggested_draft_option_1 && (
             <div className="mb-2">
               <h5 className="text-xs font-medium text-purple-700">Pushy Draft</h5>
               <pre className="text-xs whitespace-pre-wrap">{triageResult.suggested_draft_pushy}</pre>
             </div>
           )}
-          {triageResult.suggested_draft_exploratory && (
+          {triageResult.suggested_draft_exploratory && !triageResult.suggested_draft_option_2 && (
             <div className="mb-2">
               <h5 className="text-xs font-medium text-blue-700">Exploratory Draft</h5>
               <pre className="text-xs whitespace-pre-wrap">{triageResult.suggested_draft_exploratory}</pre>
             </div>
           )}
-          {triageResult.suggested_draft && !triageResult.suggested_draft_pushy && !triageResult.suggested_draft_exploratory && (
+          {triageResult.suggested_draft && !triageResult.suggested_draft_option_1 && !triageResult.suggested_draft_pushy && !triageResult.suggested_draft_exploratory && (
             <div>
               <h5 className="text-xs font-medium text-gray-700">Standard Draft</h5>
               <pre className="text-xs whitespace-pre-wrap">{triageResult.suggested_draft}</pre>

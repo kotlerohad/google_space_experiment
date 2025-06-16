@@ -241,10 +241,12 @@ REQUIRED JSON FORMAT:
 {
   "key_point": "Archive|Schedule|Respond|Update_Database|Review",
   "confidence": 8,
-  "action_reason": "Specific actionable next step to take",
-  "suggested_draft": "Draft text if action is Respond and confidence >= 7, otherwise null",
-  "suggested_draft_pushy": "More assertive draft pushing for next steps (scheduling, decisions, etc.)",
-  "suggested_draft_exploratory": "More exploratory draft asking questions and gathering information",
+  "action_reason": "Specific actionable next step to take (or FYI summary for Archive emails)",
+  "suggested_draft": "Primary draft text (same as option_1 for backward compatibility)",
+  "suggested_draft_option_1": "First contextually appropriate response approach with type label",
+  "suggested_draft_option_2": "Second contextually appropriate response approach with type label",
+  "draft_approach_1": "DIRECT|CONSULTATIVE|FOLLOW_UP|CLARIFYING|RELATIONSHIP|SCHEDULING",
+  "draft_approach_2": "DIRECT|CONSULTATIVE|FOLLOW_UP|CLARIFYING|RELATIONSHIP|SCHEDULING",
   "alternative_options": [
     {
       "action": "Schedule",
@@ -361,27 +363,46 @@ DRAFT CREATION FOR SCHEDULING:
 - End with a request for confirmation
 - Keep tone professional but friendly
 
-DUAL DRAFT CREATION:
-- suggested_draft: Use this for the primary/default draft (backward compatibility)
-- suggested_draft_pushy: More assertive, action-oriented draft that pushes for next steps
-  * For scheduling: Offer specific times and ask for immediate confirmation
-  * For business discussions: Push for decisions, next meetings, or commitments
-  * Use phrases like "I'd like to move forward with...", "Let's schedule...", "Can we confirm..."
-- suggested_draft_exploratory: More open-ended, information-gathering draft
-  * Ask clarifying questions about their needs, timeline, or requirements
-  * Explore potential collaboration areas or understand their situation better
-  * Use phrases like "Could you tell me more about...", "I'm curious about...", "What are your thoughts on..."
+INTELLIGENT DUAL DRAFT CREATION:
+The AI should analyze the email context and intelligently choose TWO different response approaches that make sense for the situation. Always be action-oriented, but vary the approach based on context.
 
-DUAL DRAFT GENERATION RULES:
-- Generate BOTH pushy and exploratory drafts when key_point is "Respond" AND confidence >= 4
-- Even for uncertain responses (confidence 4-6), provide both draft options for user review
-- This is low cost, high value since user reviews all drafts before sending
-- For confidence < 4, focus on explaining uncertainty rather than drafting responses
+DRAFT SELECTION STRATEGY:
+- Analyze the email type, sender relationship, urgency, and business context
+- Choose the two most appropriate response types from these options:
+  * DIRECT: Immediate action, clear next steps, decisive response
+  * CONSULTATIVE: Strategic discussion, exploring options, collaborative approach  
+  * FOLLOW_UP: Checking status, maintaining momentum, ensuring progress
+  * CLARIFYING: Asking specific questions to move forward, gathering requirements
+  * RELATIONSHIP: Building rapport, acknowledging value, strengthening connection
+  * SCHEDULING: Coordinating meetings, proposing times, confirming availability
 
-EXAMPLE DUAL DRAFTS:
-Pushy: "Hi [Name], I'd like to schedule our discussion about [topic]. I have these times available: [times]. Can we confirm one of these slots by end of day?"
+DRAFT GENERATION RULES:
+- suggested_draft_option_1: First contextually appropriate response approach
+- suggested_draft_option_2: Second contextually appropriate response approach (different style/focus)
+- suggested_draft: Use option_1 for backward compatibility
+- Generate BOTH options when key_point is "Respond" AND confidence >= 4
+- Each draft should be action-oriented but with different tactical approaches
+- Label each draft with its approach type (e.g., "DIRECT", "CONSULTATIVE")
 
-Exploratory: "Hi [Name], Thank you for reaching out about [topic]. Could you tell me more about your specific needs and timeline? I'd love to understand how we might collaborate effectively."
+SPECIAL CASE - FYI EMAILS:
+- For pure informational emails (newsletters, updates, announcements) where no action is needed:
+- key_point: "Archive" 
+- confidence: 8-9 (high confidence for clear FYI emails)
+- action_reason: "FYI email - Quick summary: [2-3 sentence summary of key information]"
+- No drafts needed for FYI emails
+- Focus on extracting and summarizing the key information for quick review
+
+EXAMPLE CONTEXTUAL DRAFT PAIRS:
+
+For Partnership Inquiry:
+Option 1 (DIRECT): "Hi [Name], I'm interested in exploring this partnership. Let's schedule a 30-minute call this week to discuss specifics. I have availability on [times]. Which works for you?"
+
+Option 2 (CONSULTATIVE): "Hi [Name], Thank you for the partnership proposal. I'd like to understand your strategic goals and how our companies might create mutual value. Could we start with a brief call to explore the opportunity?"
+
+For Customer Issue:
+Option 1 (DIRECT): "Hi [Name], I understand the urgency of this issue. I'm escalating this to our technical team immediately and will have an update for you by [time]. Here's what we're doing: [specific steps]."
+
+Option 2 (FOLLOW_UP): "Hi [Name], Thank you for bringing this to our attention. I want to ensure we resolve this properly. Can you provide [specific details] so we can implement the right solution?"
 
 DATABASE SUGGESTIONS GUIDELINES:
 - has_business_relevance: true if email involves customers, banks, investors, partners, prospects, vendors, or business opportunities
@@ -404,10 +425,12 @@ DUPLICATE PREVENTION RULES:
 CRITICAL REQUIREMENTS:
 - key_point: MUST be exactly one of the 5 values above (your primary recommendation)
 - confidence: MUST be a number 1-10 representing confidence in the ACTION decision
-- action_reason: MUST be a concrete next step, NOT a summary of what happened
-- suggested_draft_pushy: REQUIRED when key_point is "Respond" AND confidence >= 4
-- suggested_draft_exploratory: REQUIRED when key_point is "Respond" AND confidence >= 4
-- suggested_draft: Use for backward compatibility (can be same as pushy or exploratory)
+- action_reason: MUST be a concrete next step, NOT a summary (EXCEPTION: For FYI emails, provide "FYI email - Quick summary: [summary]")
+- suggested_draft_option_1: REQUIRED when key_point is "Respond" AND confidence >= 4
+- suggested_draft_option_2: REQUIRED when key_point is "Respond" AND confidence >= 4
+- draft_approach_1: REQUIRED when providing option_1 (specify the approach type)
+- draft_approach_2: REQUIRED when providing option_2 (specify the approach type, must be different from approach_1)
+- suggested_draft: Use option_1 for backward compatibility
 - database_suggestions: ALWAYS include this object, even if has_business_relevance is false
 - participants: ALWAYS extract sender and recipient information
 - database_insights: ALWAYS report database lookup results

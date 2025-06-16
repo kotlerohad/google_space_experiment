@@ -1,5 +1,5 @@
 import React, { useState, useContext } from 'react';
-import { SparklesIcon, CheckIcon, ExclamationIcon, XIcon, DatabaseIcon, UserIcon, BuildingIcon, ActivityIcon, ChevronDownIcon, ChevronUpIcon } from '../shared/Icons';
+import { SparklesIcon, CheckIcon, ExclamationIcon, XIcon, DatabaseIcon, UserIcon, BuildingIcon, ActivityIcon, ChevronDownIcon, CogIcon } from '../shared/Icons';
 import DebugWindow from './DebugWindow';
 import { AppContext } from '../../AppContext';
 
@@ -9,7 +9,6 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
   const [feedbackGiven, setFeedbackGiven] = useState(result.feedback || null);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDebugCollapsed, setIsDebugCollapsed] = useState(true);
 
   const handleCreateDraft = async (draft, type = null) => {
@@ -199,6 +198,31 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
     </div>
   );
 
+  // Helper functions for intelligent draft approaches
+  const getApproachIcon = (approach) => {
+    const icons = {
+      'DIRECT': '⚡',
+      'CONSULTATIVE': '🤝',
+      'FOLLOW_UP': '📋',
+      'CLARIFYING': '❓',
+      'RELATIONSHIP': '💼',
+      'SCHEDULING': '📅'
+    };
+    return icons[approach] || '📝';
+  };
+
+  const getApproachDescription = (approach) => {
+    const descriptions = {
+      'DIRECT': 'Immediate Action',
+      'CONSULTATIVE': 'Strategic Discussion',
+      'FOLLOW_UP': 'Status Check',
+      'CLARIFYING': 'Information Gathering',
+      'RELATIONSHIP': 'Rapport Building',
+      'SCHEDULING': 'Meeting Coordination'
+    };
+    return descriptions[approach] || 'Standard Response';
+  };
+
   const DatabaseSuggestions = ({ suggestions, onApprove, onReject }) => {
     const [approvedEntries, setApprovedEntries] = useState(new Set());
     const [rejectedEntries, setRejectedEntries] = useState(new Set());
@@ -316,31 +340,22 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
   };
 
   return (
-    <>
-      {/* Triage Result Header with Collapse */}
-      <div className="px-3 py-2 bg-gray-100 border-t border-gray-200 flex items-center justify-between">
+    <div className="mb-4 border border-gray-200 rounded-lg shadow-sm bg-white">
+      {/* Header - Made less prominent */}
+      <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 rounded-t-lg flex items-center">
         <div className="flex items-center gap-2">
-          <SparklesIcon className="h-4 w-4 text-purple-600" />
-          <span className="text-sm font-semibold text-gray-700">
-            Triage Result: {result.key_point?.replace('_', ' ')} 
-            <span className="text-xs text-gray-500 ml-1">({result.confidence}/10)</span>
+          <CogIcon className="h-3 w-3 text-gray-400" />
+          <span className="text-xs font-medium text-gray-600">
+            Triage Result: {result.key_point || result.decision || 'Processing'}
+            <span className="text-xs text-gray-400 ml-1">({result.confidence}/10)</span>
           </span>
           {result.isStored && (
             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Stored</span>
           )}
         </div>
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
-          aria-label={isCollapsed ? "Expand triage result" : "Collapse triage result"}
-          title={isCollapsed ? "Expand triage result" : "Collapse triage result"}
-        >
-          {isCollapsed ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronUpIcon className="h-4 w-4" />}
-        </button>
       </div>
       
-      {!isCollapsed && (
-        <div className="p-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
+      <div className="p-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
           <div className="grid grid-cols-12 gap-4">
           {/* Left Side: Action Decision & Context */}
           <div className="col-span-12 md:col-span-7 space-y-3">
@@ -558,47 +573,55 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
               <div>
                 <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Response Action</h4>
                 
-                {/* Dual Draft Options */}
-                {(result.suggested_draft_pushy || result.suggested_draft_exploratory) ? (
+                {/* Intelligent Dual Draft Options */}
+                {(result.suggested_draft_option_1 || result.suggested_draft_option_2 || result.suggested_draft_pushy || result.suggested_draft_exploratory) ? (
                   <div className="space-y-3">
-                    {/* Pushy Draft */}
-                    {result.suggested_draft_pushy && (
+                    {/* Option 1 - New intelligent approach or fallback to pushy */}
+                    {(result.suggested_draft_option_1 || result.suggested_draft_pushy) && (
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <h5 className="text-xs font-medium text-orange-700">🚀 Pushy (Next Steps)</h5>
-                          <span className="text-xs text-orange-600 bg-orange-100 px-1 rounded">Action-Oriented</span>
+                          <h5 className="text-xs font-medium text-orange-700">
+                            {result.draft_approach_1 ? `${getApproachIcon(result.draft_approach_1)} ${result.draft_approach_1}` : '🚀 Pushy (Next Steps)'}
+                          </h5>
+                          <span className="text-xs text-orange-600 bg-orange-100 px-1 rounded">
+                            {result.draft_approach_1 ? getApproachDescription(result.draft_approach_1) : 'Action-Oriented'}
+                          </span>
                         </div>
                         <div className="p-2 border border-orange-200 rounded-md bg-orange-50 text-xs text-gray-700 max-h-24 overflow-y-auto">
-                          <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_pushy}</pre>
+                          <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_option_1 || result.suggested_draft_pushy}</pre>
                         </div>
                         <button
-                          onClick={() => handleCreateDraft(result.suggested_draft_pushy, 'pushy')}
+                          onClick={() => handleCreateDraft(result.suggested_draft_option_1 || result.suggested_draft_pushy, result.draft_approach_1 || 'pushy')}
                           disabled={isDrafting}
                           className="w-full mt-1 text-xs bg-orange-600 text-white px-2 py-1 rounded hover:bg-orange-700 flex items-center justify-center gap-1 disabled:bg-orange-300"
                         >
                           <SparklesIcon className="h-3 w-3" />
-                          {isDrafting ? 'Creating...' : 'Create Pushy Draft'}
+                          {isDrafting ? 'Creating...' : `Create ${result.draft_approach_1 || 'Pushy'} Draft`}
                         </button>
                       </div>
                     )}
                     
-                    {/* Exploratory Draft */}
-                    {result.suggested_draft_exploratory && (
+                    {/* Option 2 - New intelligent approach or fallback to exploratory */}
+                    {(result.suggested_draft_option_2 || result.suggested_draft_exploratory) && (
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <h5 className="text-xs font-medium text-blue-700">🔍 Exploratory</h5>
-                          <span className="text-xs text-blue-600 bg-blue-100 px-1 rounded">Information-Gathering</span>
+                          <h5 className="text-xs font-medium text-blue-700">
+                            {result.draft_approach_2 ? `${getApproachIcon(result.draft_approach_2)} ${result.draft_approach_2}` : '🔍 Exploratory'}
+                          </h5>
+                          <span className="text-xs text-blue-600 bg-blue-100 px-1 rounded">
+                            {result.draft_approach_2 ? getApproachDescription(result.draft_approach_2) : 'Information-Gathering'}
+                          </span>
                         </div>
                         <div className="p-2 border border-blue-200 rounded-md bg-blue-50 text-xs text-gray-700 max-h-24 overflow-y-auto">
-                          <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_exploratory}</pre>
+                          <pre className="whitespace-pre-wrap font-sans">{result.suggested_draft_option_2 || result.suggested_draft_exploratory}</pre>
                         </div>
                         <button
-                          onClick={() => handleCreateDraft(result.suggested_draft_exploratory, 'exploratory')}
+                          onClick={() => handleCreateDraft(result.suggested_draft_option_2 || result.suggested_draft_exploratory, result.draft_approach_2 || 'exploratory')}
                           disabled={isDrafting}
                           className="w-full mt-1 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 flex items-center justify-center gap-1 disabled:bg-blue-300"
                         >
                           <SparklesIcon className="h-3 w-3" />
-                          {isDrafting ? 'Creating...' : 'Create Exploratory Draft'}
+                          {isDrafting ? 'Creating...' : `Create ${result.draft_approach_2 || 'Exploratory'} Draft`}
                         </button>
                       </div>
                     )}
@@ -665,35 +688,50 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
           </div>
         </div>
         
-        </div>
-      )}
-      
-      {/* Debug Window - Always visible, separate from triage collapse */}
-      <div className="mt-4">
-        {isDebugCollapsed ? (
-          <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <SparklesIcon className="h-3 w-3 text-gray-500" />
-              <span className="text-xs text-gray-600">Debug Information</span>
+        {/* Debug Window - Inside triage result, only visible when expanded */}
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          {isDebugCollapsed ? (
+            <div className="px-3 py-2 bg-gray-100 border border-gray-300 rounded flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-2">
+                <SparklesIcon className="h-4 w-4 text-gray-700" />
+                <span className="text-sm font-medium text-gray-700">Debug Information</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    console.log('🔍 DEBUG WINDOW EXPAND BUTTON CLICKED! Current state:', isDebugCollapsed);
+                    setIsDebugCollapsed(false);
+                  }}
+                  className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
+                >
+                  <SparklesIcon className="h-3 w-3" />
+                  Analyze
+                </button>
+                <button
+                  onClick={() => {
+                    console.log('🔍 DEBUG WINDOW CHEVRON CLICKED! Current state:', isDebugCollapsed);
+                    setIsDebugCollapsed(false);
+                  }}
+                  className="p-1 text-gray-700 hover:text-gray-900 hover:bg-gray-300 rounded border border-gray-300 bg-white shadow-sm"
+                  aria-label="Expand debug information"
+                  title="Expand debug information"
+                >
+                  <ChevronDownIcon className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => setIsDebugCollapsed(false)}
-              className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
-            >
-              <SparklesIcon className="h-3 w-3" />
-              Analyze
-            </button>
-          </div>
-        ) : (
-          <DebugWindow 
-            triageResult={result} 
-            email={email} 
-            openAIService={openAIService}
-            onCollapse={() => setIsDebugCollapsed(true)}
-          />
-        )}
+          ) : (
+            <DebugWindow 
+              triageResult={result} 
+              email={email} 
+              openAIService={openAIService}
+              onCollapse={() => setIsDebugCollapsed(true)}
+            />
+          )}
+        </div>
+        
       </div>
-    </>
+    </div>
   );
 };
 

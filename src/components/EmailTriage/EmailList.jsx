@@ -1,18 +1,162 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
-import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon } from '../shared/Icons';
+import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon, ChevronDownIcon, ChevronUpIcon } from '../shared/Icons';
 import TriageResult from './TriageResult';
 import emailService from '../../services/emailService';
 import supabaseService from '../../services/supabaseService';
 
 const EmailList = ({ onMessageLog, config }) => {
-  const { isConfigLoaded, openAIService, config: contextConfig } = useContext(AppContext);
+  const { openAIService, config: contextConfig, isConfigLoaded } = useContext(AppContext);
   const [emails, setEmails] = useState([]);
+  const [triageResults, setTriageResults] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [triageResults, setTriageResults] = useState({});
   const [triageLogic, setTriageLogic] = useState(`You are an expert email triage assistant. Based on the email content, provide a concise summary and categorize it. Then, suggest relevant next actions. For scheduling-related emails, always suggest checking the calendar.`);
   const [oauthStatus, setOauthStatus] = useState(emailService.getOAuthStatus());
+  const [collapsedEmails, setCollapsedEmails] = useState(new Set()); // Will be populated with all email IDs on load // Track collapsed emails
+
+  // Determine which config to use
+  const availableConfig = config || contextConfig;
+
+  // Log configuration status
+  useEffect(() => {
+    if (isConfigLoaded) {
+      console.log('EmailList - Config loaded. OpenAI service status:', {
+        hasService: !!openAIService,
+        hasApiKey: !!openAIService?.apiKey,
+        configHasKey: !!(availableConfig?.openaiApiKey),
+        isConfigLoaded
+      });
+
+      // Ensure OpenAI service has the API key
+      if (openAIService && availableConfig?.openaiApiKey && !openAIService.apiKey) {
+        console.log('🔧 Setting OpenAI API key from config in EmailList');
+        openAIService.setApiKey(availableConfig.openaiApiKey);
+      }
+    }
+  }, [isConfigLoaded, openAIService, availableConfig]);
+
+  const loadStoredTriageResults = useCallback(async (emailIds) => {
+    if (!isConfigLoaded || !supabaseService.isConnected() || emailIds.length === 0) {
+      return {};
+    }
+
+    try {
+      onMessageLog?.('Loading stored triage results...', 'info');
+      
+      const { data: storedResults, error } = await supabaseService.supabase
+        .from('triage_results')
+        .select('*')
+        .in('id', emailIds);
+
+      if (error) throw error;
+
+      // Convert array to object keyed by email ID
+      const triageResultsMap = {};
+      storedResults?.forEach(result => {
+        triageResultsMap[result.id] = {
+          key_point: result.decision,
+          confidence: result.confidence,
+          action_reason: result.action_reason,
+          summary: result.action_reason, // For backward compatibility
+          contactContext: result.contact_context,
+          calendarContext: result.calendar_context,
+          autoArchived: result.auto_archived,
+          draftCreated: result.auto_drafted,
+          timestamp: new Date(result.created_at),
+          isLoading: false,
+          // Add stored flag to distinguish from fresh triage
+          isStored: true,
+          storedAt: result.created_at
+        };
+      });
+
+      onMessageLog?.(`Loaded ${Object.keys(triageResultsMap).length} stored triage results`, 'success');
+      return triageResultsMap;
+    } catch (error) {
+      console.warn('Failed to load stored triage results:', error);
+      onMessageLog?.(`Warning: Could not load stored triage results: ${error.message}`, 'warning');
+      return {};
+    }
+  }, [onMessageLog, isConfigLoaded]);
+
+  const fetchEmails = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setEmails([]);
+    setTriageResults({}); // Clear existing triage results
+
+    try {
+      onMessageLog?.('Fetching emails from Gmail...', 'info');
+      const fetchedEmails = await emailService.fetchEmails(50);
+      setEmails(fetchedEmails);
+      
+      // Collapse all emails by default
+      setCollapsedEmails(new Set(fetchedEmails.map(email => email.id)));
+      
+      onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
+      
+      // Load stored triage results for these emails
+      if (fetchedEmails.length > 0) {
+        const emailIds = fetchedEmails.map(email => email.id);
+        const storedTriageResults = await loadStoredTriageResults(emailIds);
+        setTriageResults(storedTriageResults);
+      }
+      
+      // Update OAuth status after successful fetch
+      setOauthStatus(emailService.getOAuthStatus());
+      
+      if (fetchedEmails.length === 0) {
+        onMessageLog?.('No emails were returned from the API. Please check your Gmail account.', 'warning');
+      }
+    } catch (err) {
+      const errorMsg = `Failed to fetch emails: ${err.message}`;
+      setError(errorMsg);
+      onMessageLog?.(errorMsg, 'error');
+      console.error(err); // Also log the full error to the console
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onMessageLog, loadStoredTriageResults]);
+
+  // OAuth status monitoring effect
+  useEffect(() => {
+    const checkOAuthStatus = () => {
+      const newStatus = emailService.getOAuthStatus();
+      setOauthStatus(prevStatus => {
+        // Auto-fetch emails when Gmail auth becomes green and we don't have emails yet
+        if (newStatus.hasAccessToken && 
+            (!prevStatus?.hasAccessToken || emails.length === 0) && 
+            !isLoading && 
+            !error) {
+          console.log('📧 Gmail auth is green - auto-fetching emails...');
+          fetchEmails();
+        }
+        return newStatus;
+      });
+    };
+
+    // Check OAuth status immediately
+    checkOAuthStatus();
+
+    // Set up periodic checking (every 2 seconds) to catch OAuth completion
+    const interval = setInterval(checkOAuthStatus, 2000);
+
+    // Listen for storage changes (in case OAuth completes in another tab)
+    const handleStorageChange = (e) => {
+      if (e.key === 'gmail_tokens') {
+        checkOAuthStatus();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    // Cleanup
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [emails.length, isLoading, error]); // Removed fetchEmails to avoid infinite loop
 
   const loadTriageLogic = useCallback(async () => {
     if (!isConfigLoaded) return;
@@ -40,7 +184,8 @@ const EmailList = ({ onMessageLog, config }) => {
       console.log('📧 App loaded with Gmail auth - auto-fetching emails...');
       fetchEmails();
     }
-  }, [isConfigLoaded, oauthStatus.hasAccessToken, emails.length, isLoading, error]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfigLoaded, oauthStatus.hasAccessToken, emails.length, isLoading, error]);
 
   // Debug effect to check OpenAI service status
   useEffect(() => {
@@ -52,45 +197,6 @@ const EmailList = ({ onMessageLog, config }) => {
       });
     }
   }, [isConfigLoaded, openAIService]);
-
-  // OAuth status monitoring effect
-  useEffect(() => {
-    const checkOAuthStatus = () => {
-      const newStatus = emailService.getOAuthStatus();
-      const previousStatus = oauthStatus;
-      setOauthStatus(newStatus);
-      
-      // Auto-fetch emails when Gmail auth becomes green and we don't have emails yet
-      if (newStatus.hasAccessToken && 
-          (!previousStatus?.hasAccessToken || emails.length === 0) && 
-          !isLoading && 
-          !error) {
-        console.log('📧 Gmail auth is green - auto-fetching emails...');
-        fetchEmails();
-      }
-    };
-
-    // Check OAuth status immediately
-    checkOAuthStatus();
-
-    // Set up periodic checking (every 2 seconds) to catch OAuth completion
-    const interval = setInterval(checkOAuthStatus, 2000);
-
-    // Listen for storage changes (in case OAuth completes in another tab)
-    const handleStorageChange = (e) => {
-      if (e.key === 'gmail_tokens') {
-        checkOAuthStatus();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
-    // Cleanup
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [emails.length, isLoading, error, oauthStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveTriageResult = async (emailId, resultData) => {
     try {
@@ -151,85 +257,6 @@ const EmailList = ({ onMessageLog, config }) => {
       await supabaseService.update('triage_results', emailId, updates);
     } catch (error) {
       console.error(`Could not update triage result for ${emailId}:`, error.message);
-    }
-  };
-
-  const loadStoredTriageResults = async (emailIds) => {
-    if (!isConfigLoaded || !supabaseService.isConnected() || emailIds.length === 0) {
-      return {};
-    }
-
-    try {
-      onMessageLog?.('Loading stored triage results...', 'info');
-      
-      const { data: storedResults, error } = await supabaseService.supabase
-        .from('triage_results')
-        .select('*')
-        .in('id', emailIds);
-
-      if (error) throw error;
-
-      // Convert array to object keyed by email ID
-      const triageResultsMap = {};
-      storedResults?.forEach(result => {
-        triageResultsMap[result.id] = {
-          key_point: result.decision,
-          confidence: result.confidence,
-          action_reason: result.action_reason,
-          summary: result.action_reason, // For backward compatibility
-          contactContext: result.contact_context,
-          calendarContext: result.calendar_context,
-          autoArchived: result.auto_archived,
-          draftCreated: result.auto_drafted,
-          timestamp: new Date(result.created_at),
-          isLoading: false,
-          // Add stored flag to distinguish from fresh triage
-          isStored: true,
-          storedAt: result.created_at
-        };
-      });
-
-      onMessageLog?.(`Loaded ${Object.keys(triageResultsMap).length} stored triage results`, 'success');
-      return triageResultsMap;
-    } catch (error) {
-      console.warn('Failed to load stored triage results:', error);
-      onMessageLog?.(`Warning: Could not load stored triage results: ${error.message}`, 'warning');
-      return {};
-    }
-  };
-
-  const fetchEmails = async () => {
-    setIsLoading(true);
-    setError(null);
-    setEmails([]);
-    setTriageResults({}); // Clear existing triage results
-
-    try {
-      onMessageLog?.('Fetching emails from Gmail...', 'info');
-      const fetchedEmails = await emailService.fetchEmails(50);
-      setEmails(fetchedEmails);
-      onMessageLog?.(`Successfully fetched ${fetchedEmails.length} emails.`, 'success');
-      
-      // Load stored triage results for these emails
-      if (fetchedEmails.length > 0) {
-        const emailIds = fetchedEmails.map(email => email.id);
-        const storedTriageResults = await loadStoredTriageResults(emailIds);
-        setTriageResults(storedTriageResults);
-      }
-      
-      // Update OAuth status after successful fetch
-      setOauthStatus(emailService.getOAuthStatus());
-      
-      if (fetchedEmails.length === 0) {
-        onMessageLog?.('No emails were returned from the API. Please check your Gmail account.', 'warning');
-      }
-    } catch (err) {
-      const errorMsg = `Failed to fetch emails: ${err.message}`;
-      setError(errorMsg);
-      onMessageLog?.(errorMsg, 'error');
-      console.error(err); // Also log the full error to the console
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -599,6 +626,52 @@ const EmailList = ({ onMessageLog, config }) => {
     }
   };
 
+  const toggleEmailCollapse = (emailId) => {
+    console.log('📧 EMAIL COLLAPSE BUTTON CLICKED! Email ID:', emailId, 'Current collapsed state:', collapsedEmails.has(emailId));
+    setCollapsedEmails(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(emailId)) {
+        newSet.delete(emailId);
+      } else {
+        newSet.add(emailId);
+      }
+      return newSet;
+    });
+  };
+
+  const getStatusColor = (triageResult) => {
+    if (triageResult?.isLoading) {
+      return 'bg-yellow-100 text-yellow-800';
+    }
+    if (triageResult?.error) {
+      return 'bg-red-100 text-red-800';
+    }
+    if (triageResult?.autoArchived) {
+      return 'bg-blue-100 text-blue-800';
+    }
+    if (triageResult?.draftCreated) {
+      return 'bg-green-100 text-green-800';
+    }
+    if (triageResult?.key_point) {
+      const keyPoint = triageResult.key_point.toLowerCase();
+      switch (keyPoint) {
+        case 'respond':
+          return 'bg-red-100 text-red-800'; // High priority - needs response
+        case 'schedule':
+          return 'bg-orange-100 text-orange-800'; // Medium-high priority
+        case 'review':
+          return 'bg-yellow-100 text-yellow-800'; // Medium priority
+        case 'archive':
+          return 'bg-gray-100 text-gray-800'; // Low priority
+        case 'follow_up':
+          return 'bg-purple-100 text-purple-800'; // Medium priority
+        default:
+          return 'bg-purple-100 text-purple-800'; // Default purple
+      }
+    }
+    return 'bg-gray-100 text-gray-600'; // Pending
+  };
+
   const handleTriageAll = async () => {
     if (!openAIService || !isConfigLoaded) {
       onMessageLog?.('OpenAI service not available. Please check your API key configuration.', 'error');
@@ -729,7 +802,15 @@ This information would be used to craft more informed and strategic responses th
             </div>
             
             <div className="overflow-x-auto">
-              <table className="min-w-full bg-white border border-gray-200 rounded-lg">
+              <table className="w-full bg-white border border-gray-200 rounded-lg table-fixed">
+                <colgroup>
+                  <col className="w-40" />  {/* From - reduced width */}
+                  <col className="w-48" />  {/* Subject - reduced width */}
+                  <col className="w-auto" /> {/* Preview - takes remaining space */}
+                  <col className="w-20" />  {/* Date - reduced width */}
+                  <col className="w-32" />  {/* Status - reduced width */}
+                  <col className="w-40" />  {/* Actions - reduced width */}
+                </colgroup>
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
@@ -757,17 +838,17 @@ This information would be used to craft more informed and strategic responses th
                     <React.Fragment key={email.id}>
                       <tr className={`hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
                         <td className="px-4 py-3 text-sm">
-                          <div className="font-medium text-gray-900 truncate max-w-[200px]" title={email.from}>
+                          <div className="font-medium text-gray-900 truncate" title={email.from}>
                             {email.from}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          <div className="font-medium text-gray-900 truncate max-w-[300px]" title={email.subject}>
+                          <div className="font-medium text-gray-900 truncate" title={email.subject}>
                             {email.subject}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          <div className="text-gray-600 truncate max-w-[250px]" title={email.snippet}>
+                          <div className="text-gray-600 truncate" title={email.snippet}>
                             {email.snippet}
                           </div>
                         </td>
@@ -776,26 +857,26 @@ This information would be used to craft more informed and strategic responses th
                         </td>
                         <td className="px-4 py-3 text-sm">
                           {triageResults[email.id]?.isLoading ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
                               <div className="animate-spin rounded-full h-3 w-3 border-b border-yellow-600 mr-1"></div>
                               Deciding...
                             </span>
                           ) : triageResults[email.id]?.error ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
                               Error
                             </span>
                           ) : triageResults[email.id]?.autoArchived ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
                               ✓ Executed: Archived
                             </span>
                           ) : triageResults[email.id]?.draftCreated ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
                               ✓ Executed: Draft Created
                             </span>
                           ) : triageResults[email.id]?.key_point ? (
                             <div className="flex items-center gap-1">
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                Action: {triageResults[email.id].key_point}
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
+                                {triageResults[email.id].key_point}
                               </span>
                               {triageResults[email.id]?.isStored && (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Loaded from database">
@@ -804,35 +885,46 @@ This information would be used to craft more informed and strategic responses th
                               )}
                             </div>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                              Pending Action
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(triageResults[email.id])}`}>
+                              Pending
                             </span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={() => handleTriage(email)}
-                              disabled={triageResults[email.id]?.isLoading}
-                              className="bg-purple-600 text-white font-semibold py-1 px-3 rounded hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 flex items-center gap-1 text-xs"
-                            >
-                              <SparklesIcon className="h-3 w-3" />
-                              {triageResults[email.id]?.isLoading ? 'Deciding...' : 'Decide Action'}
-                            </button>
+                          <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleTriage(email)}
+                                disabled={triageResults[email.id]?.isLoading}
+                                className="bg-purple-600 text-white font-semibold py-1 px-3 rounded hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 flex items-center gap-1 text-xs"
+                              >
+                                <SparklesIcon className="h-3 w-3" />
+                                {triageResults[email.id]?.isLoading ? 'Deciding...' : 'Decide Action'}
+                              </button>
+                              
+                              <button
+                                onClick={() => handleEmailAction(email.id, 'archive')}
+                                className="bg-gray-600 text-white p-1.5 rounded hover:bg-gray-700 transition duration-300"
+                                title="Archive"
+                              >
+                                <ArchiveIcon className="h-3 w-3" />
+                              </button>
+                            </div>
                             
                             <button
-                              onClick={() => handleEmailAction(email.id, 'archive')}
-                              className="bg-gray-600 text-white p-1.5 rounded hover:bg-gray-700 transition duration-300"
-                              title="Archive"
+                              onClick={() => toggleEmailCollapse(email.id)}
+                              className="p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-300 rounded border border-gray-300 bg-white shadow-sm"
+                              aria-label={collapsedEmails.has(email.id) ? "Expand email" : "Collapse email"}
+                              title={collapsedEmails.has(email.id) ? "Expand email" : "Collapse email"}
                             >
-                              <ArchiveIcon className="h-3 w-3" />
+                              {collapsedEmails.has(email.id) ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronUpIcon className="h-4 w-4" />}
                             </button>
                           </div>
                         </td>
                       </tr>
                       
-                      {/* Triage Result Row */}
-                      {triageResults[email.id] && (triageResults[email.id].summary || triageResults[email.id].action_reason || triageResults[email.id].key_point || triageResults[email.id].error) && (
+                      {/* Triage Result Row - Only show if email is not collapsed */}
+                      {!collapsedEmails.has(email.id) && triageResults[email.id] && (triageResults[email.id].summary || triageResults[email.id].action_reason || triageResults[email.id].key_point || triageResults[email.id].error) && (
                         <tr className="bg-gray-50">
                           <td colSpan="6" className="px-4 py-3">
                             <TriageResult

@@ -93,35 +93,36 @@ describe('TriageResult Component', () => {
     expect(screen.getByText('Was this helpful?')).toBeInTheDocument();
   });
 
-  test('collapses triage result when collapse button is clicked', () => {
+  test('renders triage result header with less prominent styling', () => {
     renderComponent();
     
-    // Find and click the collapse button
-    const collapseButton = screen.getByRole('button', { name: /collapse triage result/i });
-    fireEvent.click(collapseButton);
+    // Check for the less prominent header
+    expect(screen.getByText('Triage Result: Respond')).toBeInTheDocument();
     
-    // Should hide the main content
-    expect(screen.queryByText('Action Decision')).not.toBeInTheDocument();
-    expect(screen.queryByText('Test action reason')).not.toBeInTheDocument();
-    expect(screen.queryByText('Was this helpful?')).not.toBeInTheDocument();
+    // Should show confidence score
+    expect(screen.getByText('(8/10)')).toBeInTheDocument();
+  });
+
+  test('renders main content sections', () => {
+    renderComponent();
     
-    // But header should still be visible
+    // Should show main content sections
+    expect(screen.getByText('Action Decision')).toBeInTheDocument();
+    expect(screen.getByText('Test action reason')).toBeInTheDocument();
+    expect(screen.getByText('Was this helpful?')).toBeInTheDocument();
+    
+    // Header should be visible
     expect(screen.getByText('Triage Result: Respond')).toBeInTheDocument();
   });
 
-  test('expands triage result when collapse button is clicked again', () => {
+  test('renders confidence meter correctly', () => {
     renderComponent();
     
-    const collapseButton = screen.getByRole('button', { name: /collapse triage result/i });
+    // Should show confidence score in header
+    expect(screen.getByText('(8/10)')).toBeInTheDocument();
     
-    // Collapse first
-    fireEvent.click(collapseButton);
-    expect(screen.queryByText('Action Decision')).not.toBeInTheDocument();
-    
-    // Expand again (button text should change to "expand")
-    const expandButton = screen.getByRole('button', { name: /expand triage result/i });
-    fireEvent.click(expandButton);
-    expect(screen.getByText('Action Decision')).toBeInTheDocument();
+    // Should show confidence meter in action decision section
+    expect(screen.getByText('8/10 confidence')).toBeInTheDocument();
   });
 
   test('shows debug window collapsed by default', () => {
@@ -133,6 +134,15 @@ describe('TriageResult Component', () => {
     
     // Should not show expanded debug window
     expect(screen.queryByTestId('debug-window')).not.toBeInTheDocument();
+  });
+
+  test('renders debug analyze button', () => {
+    renderComponent();
+    
+    // Check for the Analyze button
+    const analyzeButton = screen.getByRole('button', { name: /analyze/i });
+    expect(analyzeButton).toBeInTheDocument();
+    expect(analyzeButton).toHaveClass('bg-blue-600', 'text-white');
   });
 
   test('expands debug window when Analyze button is clicked', () => {
@@ -168,14 +178,10 @@ describe('TriageResult Component', () => {
     expect(screen.queryByTestId('debug-window')).not.toBeInTheDocument();
   });
 
-  test('debug window state is independent of triage result collapse state', () => {
+  test('debug window expands and collapses independently', () => {
     renderComponent();
     
-    // Collapse triage result
-    const triageCollapseButton = screen.getByRole('button', { name: /collapse triage result/i });
-    fireEvent.click(triageCollapseButton);
-    
-    // Debug window should still be visible (in collapsed state)
+    // Debug window should be collapsed initially
     expect(screen.getByText('Debug Information')).toBeInTheDocument();
     expect(screen.getByText('Analyze')).toBeInTheDocument();
     
@@ -183,9 +189,27 @@ describe('TriageResult Component', () => {
     const analyzeButton = screen.getByText('Analyze');
     fireEvent.click(analyzeButton);
     
-    // Debug window should be expanded even though triage is collapsed
+    // Debug window should be expanded
     expect(screen.getByTestId('debug-window')).toBeInTheDocument();
-    expect(screen.queryByText('Action Decision')).not.toBeInTheDocument(); // Triage still collapsed
+    expect(screen.getByText('Action Decision')).toBeInTheDocument(); // Main content still visible
+  });
+
+  test('debug analyze button is functional', () => {
+    renderComponent();
+    
+    // Analyze button should be visible initially
+    expect(screen.getByRole('button', { name: /analyze/i })).toBeInTheDocument();
+    
+    // Expand debug window
+    const analyzeButton = screen.getByText('Analyze');
+    fireEvent.click(analyzeButton);
+    
+    // Debug window should be expanded with collapse button
+    expect(screen.getByTestId('debug-window')).toBeInTheDocument();
+    expect(screen.getByTestId('debug-collapse-btn')).toBeInTheDocument();
+    
+    // Main content should still be visible
+    expect(screen.getByText('Action Decision')).toBeInTheDocument();
   });
 
   test('handles feedback correctly', async () => {
