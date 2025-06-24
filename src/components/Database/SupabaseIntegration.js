@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
-import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X, ChevronDown } from 'lucide-react';
+import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X, ChevronDown, Linkedin } from 'lucide-react';
 import { CleanupIcon } from '../shared/Icons';
 import AICommandInput from './AICommandInput';
 import CleanupSuggestions from './CleanupSuggestions';
 import LastChatDatePicker from './LastChatDatePicker';
 import { emailAnalysisService } from '../../services/emailAnalysisService';
+import linkedinService from '../../services/linkedinService';
 
 // Google Sheets-style Column Filter Dropdown Component
 const ColumnFilterDropdown = ({ column, records, filters, onFiltersChange }) => {
@@ -607,6 +608,38 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       const confidence = parseInt(value);
       const color = confidence >= 80 ? 'text-green-600' : confidence >= 60 ? 'text-yellow-600' : 'text-red-600';
       return <span className={`font-medium ${color}`}>{confidence}%</span>;
+    }
+    
+    // Handle LinkedIn URL with connection status
+    if (column.key === 'linkedin_url') {
+      if (!value) {
+        return <span className="text-gray-400 italic">—</span>;
+      }
+      
+      const connectionStatus = record.linkedin_connection_status || 'unknown';
+      const emoji = linkedinService.getConnectionStatusEmoji(connectionStatus);
+      const statusText = linkedinService.getConnectionStatusText(connectionStatus);
+      
+      return (
+        <div className="flex items-center gap-2">
+          <a
+            href={value}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-blue-600 hover:text-blue-800 transition-colors"
+            title={`Open LinkedIn profile - ${statusText}`}
+          >
+            <Linkedin className="w-4 h-4" />
+            <span className="text-sm">Profile</span>
+          </a>
+          <ConnectionStatusDropdown
+            currentStatus={connectionStatus}
+            contactId={record.id}
+            onUpdate={onUpdate}
+            onMessageLog={onMessageLog}
+          />
+        </div>
+      );
     }
     
     // Handle feedback (for triage results)
@@ -1313,6 +1346,7 @@ const TABLE_CONFIG = {
       { key: 'email', label: 'Email', width: 'w-64' },
       { key: 'title', label: 'Title', width: 'w-32' },
       { key: 'company_name', label: 'Company', width: 'w-32' },
+      { key: 'linkedin_url', label: 'LinkedIn', width: 'w-40' },
       { key: 'source', label: 'Source', width: 'w-28' },
       { key: 'priority', label: 'Priority', width: 'w-24' },
       { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
@@ -1614,6 +1648,92 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
   );
 };
 
+// Connection Status Dropdown Component
+const ConnectionStatusDropdown = ({ currentStatus, contactId, onUpdate, onMessageLog }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const statusOptions = {
+    'connected': { label: 'Connected', emoji: '✅', color: 'bg-green-100 text-green-800' },
+    'not_connected': { label: 'Not Connected', emoji: '❌', color: 'bg-red-100 text-red-800' },
+    'unknown': { label: 'Unknown', emoji: '❓', color: 'bg-gray-100 text-gray-800' },
+    'sent_message_no_response': { label: 'Message Sent (No Response)', emoji: '📩', color: 'bg-orange-100 text-orange-800' }
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.connection-status-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleStatusChange = async (newStatus) => {
+    if (newStatus === currentStatus) {
+      setIsOpen(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      onMessageLog?.(`Updating LinkedIn connection status to ${statusOptions[newStatus].label}...`, 'info');
+      
+      await linkedinService.updateConnectionStatus(contactId, newStatus);
+
+      onMessageLog?.(`✓ Successfully updated LinkedIn connection status to ${statusOptions[newStatus].label}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error('Failed to update connection status:', error);
+      onMessageLog?.(`✗ Failed to update connection status: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
+      setIsOpen(false);
+    }
+  };
+
+  const currentOption = statusOptions[currentStatus] || statusOptions['unknown'];
+
+  return (
+    <div className="relative connection-status-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isUpdating}
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${currentOption.color} ${
+          isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
+        }`}
+        title={`Click to change LinkedIn connection status - Current: ${currentOption.label}`}
+      >
+        <span className="mr-1">{currentOption.emoji}</span>
+        {isUpdating ? 'Updating...' : currentOption.label}
+        <span className="ml-1 text-xs">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-56">
+          {Object.entries(statusOptions).map(([statusKey, option]) => (
+            <button
+              key={statusKey}
+              onClick={() => handleStatusChange(statusKey)}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                statusKey === currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              }`}
+            >
+              <span className="mr-2">{option.emoji}</span>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SupabaseIntegration = ({ onMessageLog }) => {
   const { isConfigLoaded, openAIService } = useContext(AppContext);
   const [currentView, setCurrentView] = useState('companies');
@@ -1629,6 +1749,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
   const [groupByColumn, setGroupByColumn] = useState(null);
   const [isFindingLastChat, setIsFindingLastChat] = useState(false);
   const [columnFilters, setColumnFilters] = useState({});
+  const [isFindingLinkedIn, setIsFindingLinkedIn] = useState(false);
 
   // Handle navigation to contact
   useEffect(() => {
@@ -1698,6 +1819,8 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             last_chat,
             created_at,
             updated_at,
+            linkedin_url,
+            linkedin_connection_status,
             companies!inner(name)
           `);
         
@@ -1992,6 +2115,33 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     }
   };
 
+  const handleFindLinkedIn = async () => {
+    if (isFindingLinkedIn) return;
+
+    setIsFindingLinkedIn(true);
+    try {
+      onMessageLog?.('🔍 Starting LinkedIn profile search for all contacts...', 'info');
+      
+      // Find LinkedIn profiles for all contacts
+      const results = await linkedinService.findLinkedInForAllContacts((progress) => {
+        onMessageLog?.(`📍 Progress: ${progress.current}/${progress.total} - ${progress.contact}: ${progress.status}`, 'info');
+      });
+      
+      // Refresh the current view
+      await fetchData(currentView, 1, false);
+      
+      const message = `🎉 LinkedIn search complete! Found ${results.found} profiles out of ${results.total} contacts (${results.skipped} skipped, ${results.errors} errors)`;
+      
+      onMessageLog?.(message, 'success');
+      
+    } catch (error) {
+      console.error('Error finding LinkedIn profiles:', error);
+      onMessageLog?.(`❌ Failed to find LinkedIn profiles: ${error.message}`, 'error');
+    } finally {
+      setIsFindingLinkedIn(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* AI Command Input */}
@@ -2102,6 +2252,19 @@ const SupabaseIntegration = ({ onMessageLog }) => {
               >
                 <Search className={`h-4 w-4 ${isFindingLastChat ? 'animate-spin' : ''}`} />
                 {isFindingLastChat ? 'Searching Gmail...' : 'Find Last Chat (Gmail)'}
+              </button>
+            )}
+            
+            {/* Find LinkedIn Profiles Button - Only for Contacts */}
+            {currentView === 'contacts' && (
+              <button
+                onClick={handleFindLinkedIn}
+                disabled={isFindingLinkedIn || isLoading || !records || records.length === 0}
+                className="flex items-center gap-2 bg-blue-800 text-white px-3 py-2 rounded-lg hover:bg-blue-900 transition-colors disabled:bg-blue-400 disabled:cursor-not-allowed text-sm font-medium"
+                title="Search for LinkedIn profiles for all contacts"
+              >
+                <Linkedin className={`h-4 w-4 ${isFindingLinkedIn ? 'animate-spin' : ''}`} />
+                {isFindingLinkedIn ? 'Searching LinkedIn...' : 'Find LinkedIn Profiles'}
               </button>
             )}
             

@@ -26,6 +26,13 @@ ADD COLUMN IF NOT EXISTS last_chat TIMESTAMP DEFAULT NULL;
 ALTER TABLE companies 
 ADD COLUMN IF NOT EXISTS last_chat TIMESTAMP DEFAULT NULL;
 
+-- Add LinkedIn columns to contacts table
+ALTER TABLE contacts 
+ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(255) DEFAULT NULL;
+
+ALTER TABLE contacts 
+ADD COLUMN IF NOT EXISTS linkedin_connection_status VARCHAR(50) DEFAULT 'unknown';
+
 -- Update existing records with default values (optional)
 UPDATE companies SET source = 'Manual' WHERE source IS NULL;
 UPDATE contacts SET source = 'Manual' WHERE source IS NULL;
@@ -38,6 +45,8 @@ COMMENT ON COLUMN contacts.priority IS 'Priority level: 1=High, 2=Medium, 3=Low,
 COMMENT ON COLUMN activities.priority IS 'Priority level: 1=High, 2=Medium, 3=Low, null=No priority';
 COMMENT ON COLUMN contacts.last_chat IS 'Date of last communication/chat with this contact';
 COMMENT ON COLUMN companies.last_chat IS 'Date of last communication with any contact from this company';
+COMMENT ON COLUMN contacts.linkedin_url IS 'LinkedIn profile URL (shortened link)';
+COMMENT ON COLUMN contacts.linkedin_connection_status IS 'LinkedIn connection status: connected, not_connected, unknown, sent_message_no_response';
 
 -- Add new company types
 INSERT INTO company_types (id, name) VALUES (6, 'Customer (Software provider)') ON CONFLICT (id) DO NOTHING;
