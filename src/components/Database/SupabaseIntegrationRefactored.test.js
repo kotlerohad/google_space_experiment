@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import SupabaseIntegration from './SupabaseIntegrationRefactored';
+import SupabaseIntegration from './SupabaseIntegration';
 import { AppContext } from '../../AppContext';
 
 // Mock all the services and components
