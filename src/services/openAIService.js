@@ -161,6 +161,30 @@ DATABASE SCHEMA:
       throw new Error("Database schema is not set. Cannot generate DB operations.");
     }
 
+    // Check if the instruction involves searching emails
+    const needsEmailSearch = userInstruction.toLowerCase().includes('inbox') || 
+                           userInstruction.toLowerCase().includes('email') ||
+                           userInstruction.toLowerCase().includes('check my') ||
+                           userInstruction.toLowerCase().includes('find his contact details') ||
+                           userInstruction.toLowerCase().includes('find her contact details');
+
+    let emailSearchResults = null;
+    if (needsEmailSearch) {
+      // Extract the person's name from the instruction
+      const nameMatch = userInstruction.match(/add\s+([^as]+)\s+as/i);
+      if (nameMatch) {
+        const personName = nameMatch[1].trim();
+        console.log(`🔍 Searching emails for contact details of: ${personName}`);
+        
+        try {
+          emailSearchResults = await this.searchEmailsForContact(personName);
+        } catch (error) {
+          console.warn('Email search failed:', error);
+          emailSearchResults = `Unable to search emails: ${error.message}`;
+        }
+      }
+    }
+
     const systemPrompt = `You are an expert at converting natural language instructions into a series of structured database operations. Your responses must be a single JSON object that contains a key "operations", which is an array of operation objects. Do not include any other text, greetings, or explanations in your response.
 
 Here is the database schema you are working with:
@@ -197,25 +221,123 @@ Each operation object must have these exact fields:
 - Always return an array of operation objects. If no operations can be determined, return an empty array.
 - Use "action" not "operation" as the field name.
 - For priority fields (priority column), use integer values: 1=High, 2=Medium, 3=Low, or null for empty/None. NEVER use string values like "None" or "High" for priority fields.
-- When setting priority to empty/None, use null, not the string "None".`;
+- When setting priority to empty/None, use null, not the string "None".
+
+${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nUse the information above to populate contact details when creating the contact record.` : ''}`;
+
+    const userPrompt = userInstruction;
 
     const payload = {
       model: this.model,
-      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userInstruction }
-      ]
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 1000
     };
 
-    const result = await this._request(payload);
-    
     try {
-      const content = result.choices[0].message.content;
-      return JSON.parse(content);
-    } catch (e) {
-      console.error("Failed to parse JSON from OpenAI response:", e);
-      throw new Error("AI did not return a valid JSON object of operations.");
+      const response = await this._request(payload);
+      const content = response.choices[0].message.content.trim();
+      
+      // Parse the JSON response
+      let operations;
+      try {
+        operations = JSON.parse(content);
+      } catch (parseError) {
+        console.error("Failed to parse AI response as JSON:", content);
+        throw new Error("AI returned invalid JSON format");
+      }
+
+      if (!operations.operations || !Array.isArray(operations.operations)) {
+        throw new Error("AI response missing 'operations' array");
+      }
+
+      return operations;
+    } catch (error) {
+      console.error("Failed to generate database operations:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Search emails for contact information about a specific person
+   * @param {string} personName - The name of the person to search for
+   * @returns {Promise<string>} - Formatted contact information found in emails
+   */
+  async searchEmailsForContact(personName) {
+    try {
+      // Import email service dynamically to avoid circular dependencies
+      const { default: emailService } = await import('./emailService');
+      
+      // Search for emails containing the person's name
+      const searchQuery = `"${personName}"`;
+      const emails = await emailService.searchEmails(searchQuery, 10);
+      
+      if (!emails || emails.length === 0) {
+        return `No emails found containing "${personName}".`;
+      }
+
+      // Extract contact information from the emails
+      let contactInfo = `Found ${emails.length} emails mentioning "${personName}":\n\n`;
+      
+      const extractedEmails = new Set();
+      const extractedPhones = new Set();
+      const extractedTitles = new Set();
+      const extractedCompanies = new Set();
+      
+      for (const email of emails.slice(0, 5)) { // Limit to first 5 emails
+        const content = `${email.subject} ${email.snippet || ''}`;
+        
+        // Extract email addresses
+        const emailMatches = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+        if (emailMatches) {
+          emailMatches.forEach(e => extractedEmails.add(e));
+        }
+        
+        // Extract phone numbers
+        const phoneMatches = content.match(/\+?[\d\s\-\(\)]{10,}/g);
+        if (phoneMatches) {
+          phoneMatches.forEach(p => extractedPhones.add(p.trim()));
+        }
+        
+        // Extract potential titles (common job titles)
+        const titleMatches = content.match(/\b(CEO|CTO|CFO|VP|Director|Manager|Senior|Lead|Head of|President|Founder)\s+[A-Za-z\s]+/gi);
+        if (titleMatches) {
+          titleMatches.forEach(t => extractedTitles.add(t.trim()));
+        }
+        
+        // Extract company names (look for @domain patterns and common company indicators)
+        const companyMatches = content.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g);
+        if (companyMatches) {
+          companyMatches.forEach(c => {
+            const domain = c.substring(1);
+            if (!domain.includes('gmail.com') && !domain.includes('yahoo.com') && !domain.includes('outlook.com')) {
+              extractedCompanies.add(domain);
+            }
+          });
+        }
+      }
+      
+      if (extractedEmails.size > 0) {
+        contactInfo += `Email addresses: ${Array.from(extractedEmails).join(', ')}\n`;
+      }
+      if (extractedPhones.size > 0) {
+        contactInfo += `Phone numbers: ${Array.from(extractedPhones).join(', ')}\n`;
+      }
+      if (extractedTitles.size > 0) {
+        contactInfo += `Potential titles: ${Array.from(extractedTitles).join(', ')}\n`;
+      }
+      if (extractedCompanies.size > 0) {
+        contactInfo += `Associated domains/companies: ${Array.from(extractedCompanies).join(', ')}\n`;
+      }
+      
+      return contactInfo;
+      
+    } catch (error) {
+      console.error('Email search failed:', error);
+      throw new Error(`Failed to search emails: ${error.message}`);
     }
   }
 

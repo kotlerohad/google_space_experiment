@@ -751,6 +751,69 @@ class EmailService {
     
     return `${dateStr}, ${startTime} - ${endTime} (${durationStr})`;
   }
+
+  /**
+   * Search for emails involving a specific contact
+   * @param {string} contactEmail - The email address to search for
+   * @param {number} maxResults - Maximum number of results to return
+   * @returns {Promise<Array>} - Array of email messages
+   */
+  async searchEmails(contactEmail, maxResults = 10) {
+    await this.ensureValidToken();
+
+    try {
+      // Build search query to find emails from or to this contact
+      const query = `from:${contactEmail} OR to:${contactEmail}`;
+      
+      // Search for messages
+      const response = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Gmail API search failed: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.messages || data.messages.length === 0) {
+        return [];
+      }
+
+      // Get detailed information for each message
+      const emailPromises = data.messages.map(async (message) => {
+        const messageResponse = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (!messageResponse.ok) {
+          console.warn(`Failed to fetch message ${message.id}`);
+          return null;
+        }
+
+        const messageData = await messageResponse.json();
+        return this.parseEmailMessage(messageData);
+      });
+
+      const emails = await Promise.all(emailPromises);
+      return emails.filter(email => email !== null).sort((a, b) => new Date(b.date) - new Date(a.date));
+    } catch (error) {
+      console.error('Error searching emails:', error);
+      throw error;
+    }
+  }
 }
 
 const emailService = new EmailService();

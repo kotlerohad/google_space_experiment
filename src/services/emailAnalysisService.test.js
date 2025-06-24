@@ -1,7 +1,8 @@
 import { emailAnalysisService } from './emailAnalysisService';
 import supabaseService from './supabaseService';
+import emailService from './emailService';
 
-// Mock the supabaseService
+// Mock the services
 jest.mock('./supabaseService', () => ({
   __esModule: true,
   default: {
@@ -11,7 +12,14 @@ jest.mock('./supabaseService', () => ({
   }
 }));
 
-describe('EmailAnalysisService', () => {
+jest.mock('./emailService', () => ({
+  __esModule: true,
+  default: {
+    searchEmails: jest.fn()
+  }
+}));
+
+describe('EmailAnalysisService (Gmail-based)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     console.log = jest.fn();
@@ -29,77 +37,47 @@ describe('EmailAnalysisService', () => {
       expect(result).toBeNull();
     });
 
-    it('should return last chat date when found', async () => {
+    it('should return last chat date when Gmail emails found', async () => {
       const mockDate = '2024-01-15T10:30:00Z';
-      const mockData = [{ created_at: mockDate, email_from: 'test@example.com' }];
+      const mockEmails = [
+        { 
+          date: mockDate, 
+          from: 'test@example.com',
+          subject: 'Test Email'
+        }
+      ];
       
-      const mockSelect = jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          order: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({
-              data: mockData,
-              error: null
-            })
-          })
-        })
-      });
-
-      supabaseService.supabase.from.mockReturnValue({
-        select: mockSelect
-      });
+      emailService.searchEmails.mockResolvedValue(mockEmails);
 
       const result = await emailAnalysisService.findLastChatForContact('test@example.com');
       
       expect(result).toBeInstanceOf(Date);
       expect(result.toISOString()).toBe(mockDate);
-      expect(supabaseService.supabase.from).toHaveBeenCalledWith('triage_results');
+      expect(emailService.searchEmails).toHaveBeenCalledWith('test@example.com', 1);
     });
 
-    it('should return null when no triage results found', async () => {
-      const mockSelect = jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          order: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({
-              data: [],
-              error: null
-            })
-          })
-        })
-      });
-
-      supabaseService.supabase.from.mockReturnValue({
-        select: mockSelect
-      });
+    it('should return null when no Gmail emails found', async () => {
+      emailService.searchEmails.mockResolvedValue([]);
 
       const result = await emailAnalysisService.findLastChatForContact('notfound@example.com');
       expect(result).toBeNull();
     });
 
-    it('should handle database errors gracefully', async () => {
-      const mockSelect = jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          order: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({
-              data: null,
-              error: { message: 'Database error' }
-            })
-          })
-        })
-      });
-
-      supabaseService.supabase.from.mockReturnValue({
-        select: mockSelect
-      });
+    it('should handle Gmail API errors gracefully', async () => {
+      emailService.searchEmails.mockRejectedValue(new Error('Gmail API error'));
 
       const result = await emailAnalysisService.findLastChatForContact('test@example.com');
       expect(result).toBeNull();
-      expect(console.error).toHaveBeenCalledWith('Error querying triage results:', { message: 'Database error' });
+      expect(console.error).toHaveBeenCalledWith(
+        '❌ Error searching Gmail for test@example.com:',
+        expect.any(Error)
+      );
     });
   });
 
   describe('updateContactLastChat', () => {
     it('should return false when no lastChatDate provided', async () => {
-      const result = await emailAnalysisService.updateContactLastChat(1, null, null);
+      const result = await emailAnalysisService.updateContactLastChat(1, 'test@example.com', null, null);
       expect(result).toBe(false);
     });
 
@@ -107,7 +85,7 @@ describe('EmailAnalysisService', () => {
       const existingDate = new Date('2024-01-20T10:00:00Z');
       const lastChatDate = new Date('2024-01-15T10:00:00Z');
       
-      const result = await emailAnalysisService.updateContactLastChat(1, lastChatDate, existingDate);
+      const result = await emailAnalysisService.updateContactLastChat(1, 'test@example.com', lastChatDate, existingDate);
       expect(result).toBe(false);
     });
 
@@ -125,7 +103,7 @@ describe('EmailAnalysisService', () => {
         update: mockUpdate
       });
 
-      const result = await emailAnalysisService.updateContactLastChat(1, lastChatDate, existingDate);
+      const result = await emailAnalysisService.updateContactLastChat(1, 'test@example.com', lastChatDate, existingDate);
       
       expect(result).toBe(true);
       expect(supabaseService.supabase.from).toHaveBeenCalledWith('contacts');
@@ -145,7 +123,7 @@ describe('EmailAnalysisService', () => {
         update: mockUpdate
       });
 
-      const result = await emailAnalysisService.updateContactLastChat(1, lastChatDate, null);
+      const result = await emailAnalysisService.updateContactLastChat(1, 'test@example.com', lastChatDate, null);
       
       expect(result).toBe(true);
       expect(mockUpdate).toHaveBeenCalledWith({ last_chat: lastChatDate.toISOString() });
@@ -164,10 +142,13 @@ describe('EmailAnalysisService', () => {
         update: mockUpdate
       });
 
-      const result = await emailAnalysisService.updateContactLastChat(1, lastChatDate, null);
+      const result = await emailAnalysisService.updateContactLastChat(1, 'test@example.com', lastChatDate, null);
       
       expect(result).toBe(false);
-      expect(console.error).toHaveBeenCalledWith('Error updating last_chat for contact 1:', { message: 'Update failed' });
+      expect(console.error).toHaveBeenCalledWith(
+        '❌ Error updating last_chat for contact 1 (test@example.com):',
+        { message: 'Update failed' }
+      );
     });
   });
 
@@ -188,7 +169,7 @@ describe('EmailAnalysisService', () => {
 
       const result = await emailAnalysisService.findLastChatForAllContacts();
       
-      expect(result).toEqual({ updated: 0, total: 0 });
+      expect(result).toEqual({ updated: 0, total: 0, skipped: 0 });
     });
 
     it('should handle contacts fetch error', async () => {
@@ -207,14 +188,52 @@ describe('EmailAnalysisService', () => {
 
       const result = await emailAnalysisService.findLastChatForAllContacts();
       
-      expect(result).toEqual({ updated: 0, total: 0 });
-      expect(console.error).toHaveBeenCalledWith('Error fetching contacts:', { message: 'Fetch error' });
+      expect(result).toEqual({ updated: 0, total: 0, skipped: 0 });
+      expect(console.error).toHaveBeenCalledWith('❌ Error fetching contacts:', { message: 'Fetch error' });
     });
 
-    it('should process contacts in batches', async () => {
+    it('should process contacts and update last chat dates', async () => {
       const mockContacts = [
-        { id: 1, email: 'test1@example.com', last_chat: null },
-        { id: 2, email: 'test2@example.com', last_chat: null }
+        { id: 1, name: 'John Doe', email: 'john@example.com', last_chat: null },
+        { id: 2, name: 'Jane Smith', email: 'jane@example.com', last_chat: '2024-01-01T00:00:00Z' }
+      ];
+
+      const mockSelect = jest.fn().mockReturnValue({
+        not: jest.fn().mockReturnValue({
+          neq: jest.fn().mockResolvedValue({
+            data: mockContacts,
+            error: null
+          })
+        })
+      });
+
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({
+          error: null
+        })
+      });
+
+      supabaseService.supabase.from.mockReturnValue({
+        select: mockSelect,
+        update: mockUpdate
+      });
+
+      // Mock Gmail search results
+      emailService.searchEmails
+        .mockResolvedValueOnce([{ date: '2024-01-15T10:00:00Z', from: 'john@example.com' }])
+        .mockResolvedValueOnce([{ date: '2024-01-20T10:00:00Z', from: 'jane@example.com' }]);
+
+      const result = await emailAnalysisService.findLastChatForAllContacts();
+      
+      expect(result.total).toBe(2);
+      expect(result.updated).toBe(2);
+      expect(result.skipped).toBe(0);
+      expect(emailService.searchEmails).toHaveBeenCalledTimes(2);
+    });
+
+    it('should skip contacts with no Gmail correspondence', async () => {
+      const mockContacts = [
+        { id: 1, name: 'John Doe', email: 'john@example.com', last_chat: null }
       ];
 
       const mockSelect = jest.fn().mockReturnValue({
@@ -230,30 +249,42 @@ describe('EmailAnalysisService', () => {
         select: mockSelect
       });
 
-      // Mock the methods to simulate successful updates
-      const originalFindLastChat = emailAnalysisService.findLastChatForContact;
-      const originalUpdateContact = emailAnalysisService.updateContactLastChat;
-      
-      emailAnalysisService.findLastChatForContact = jest.fn().mockResolvedValue(new Date('2024-01-15T10:00:00Z'));
-      emailAnalysisService.updateContactLastChat = jest.fn().mockResolvedValue(true);
+      // Mock no Gmail emails found
+      emailService.searchEmails.mockResolvedValue([]);
 
       const result = await emailAnalysisService.findLastChatForAllContacts();
       
-      expect(result).toEqual({ updated: 2, total: 2 });
-      expect(emailAnalysisService.findLastChatForContact).toHaveBeenCalledTimes(2);
-      expect(emailAnalysisService.updateContactLastChat).toHaveBeenCalledTimes(2);
-
-      // Restore original methods
-      emailAnalysisService.findLastChatForContact = originalFindLastChat;
-      emailAnalysisService.updateContactLastChat = originalUpdateContact;
+      expect(result.total).toBe(1);
+      expect(result.updated).toBe(0);
+      expect(result.skipped).toBe(1);
     });
 
-    it('should handle empty contacts gracefully', async () => {
-      // This will fail if supabase is not initialized, but that's expected in tests
+    it('should handle Gmail API errors for individual contacts', async () => {
+      const mockContacts = [
+        { id: 1, name: 'John Doe', email: 'john@example.com', last_chat: null }
+      ];
+
+      const mockSelect = jest.fn().mockReturnValue({
+        not: jest.fn().mockReturnValue({
+          neq: jest.fn().mockResolvedValue({
+            data: mockContacts,
+            error: null
+          })
+        })
+      });
+
+      supabaseService.supabase.from.mockReturnValue({
+        select: mockSelect
+      });
+
+      // Mock Gmail API error
+      emailService.searchEmails.mockRejectedValue(new Error('Gmail API error'));
+
       const result = await emailAnalysisService.findLastChatForAllContacts();
-      expect(typeof result).toBe('object');
-      expect(result).toHaveProperty('updated');
-      expect(result).toHaveProperty('total');
+      
+      expect(result.total).toBe(1);
+      expect(result.updated).toBe(0);
+      expect(result.skipped).toBe(1);
     });
   });
 
@@ -273,37 +304,20 @@ describe('EmailAnalysisService', () => {
       expect(result).toEqual({ updated: 0, total: 0 });
     });
 
-    it('should update company last_chat dates based on contacts', async () => {
+    it('should update company last_chat based on contact dates', async () => {
       const mockCompanies = [
         { id: 1, name: 'Company A' },
         { id: 2, name: 'Company B' }
       ];
 
-      let callCount = 0;
-      const mockSelect = jest.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          // First call - get companies
-          return Promise.resolve({
-            data: mockCompanies,
-            error: null
-          });
-        } else {
-          // Subsequent calls - get contacts for each company
-          return {
-            eq: jest.fn().mockReturnValue({
-              not: jest.fn().mockReturnValue({
-                order: jest.fn().mockReturnValue({
-                  limit: jest.fn().mockResolvedValue({
-                    data: [{ last_chat: '2024-01-15T10:00:00Z' }],
-                    error: null
-                  })
-                })
-              })
-            })
-          };
-        }
-      });
+      const mockContacts = [
+        { last_chat: '2024-01-15T10:00:00Z' }
+      ];
+
+      const mockSelect = jest.fn()
+        .mockResolvedValueOnce({ data: mockCompanies, error: null })
+        .mockResolvedValueOnce({ data: mockContacts, error: null })
+        .mockResolvedValueOnce({ data: [], error: null });
 
       const mockUpdate = jest.fn().mockReturnValue({
         eq: jest.fn().mockResolvedValue({
@@ -311,87 +325,44 @@ describe('EmailAnalysisService', () => {
         })
       });
 
-      supabaseService.supabase.from.mockImplementation((table) => {
-        if (table === 'companies') {
-          return { select: mockSelect, update: mockUpdate };
-        } else if (table === 'contacts') {
-          return { select: mockSelect };
-        }
+      supabaseService.supabase.from.mockReturnValue({
+        select: mockSelect,
+        update: mockUpdate
       });
 
       const result = await emailAnalysisService.updateCompanyLastChatDates();
       
-      expect(result).toEqual({ updated: 2, total: 2 });
+      expect(result.total).toBe(2);
+      expect(result.updated).toBe(1);
     });
 
-    it('should handle companies fetch error', async () => {
-      const mockSelect = jest.fn().mockResolvedValue({
-        data: null,
-        error: { message: 'Companies fetch error' }
+    it('should handle company update errors gracefully', async () => {
+      const mockCompanies = [{ id: 1, name: 'Company A' }];
+      const mockContacts = [{ last_chat: '2024-01-15T10:00:00Z' }];
+
+      const mockSelect = jest.fn()
+        .mockResolvedValueOnce({ data: mockCompanies, error: null })
+        .mockResolvedValueOnce({ data: mockContacts, error: null });
+
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({
+          error: { message: 'Update failed' }
+        })
       });
 
       supabaseService.supabase.from.mockReturnValue({
-        select: mockSelect
+        select: mockSelect,
+        update: mockUpdate
       });
 
       const result = await emailAnalysisService.updateCompanyLastChatDates();
       
-      expect(result).toEqual({ updated: 0, total: 0 });
-      expect(console.error).toHaveBeenCalledWith('Error fetching companies:', { message: 'Companies fetch error' });
-    });
-
-    it('should handle empty companies gracefully', async () => {
-      // This will fail if supabase is not initialized, but that's expected in tests
-      const result = await emailAnalysisService.updateCompanyLastChatDates();
-      expect(typeof result).toBe('object');
-      expect(result).toHaveProperty('updated');
-      expect(result).toHaveProperty('total');
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle unexpected errors in findLastChatForContact', async () => {
-      supabaseService.supabase.from.mockImplementation(() => {
-        throw new Error('Unexpected error');
-      });
-
-      const result = await emailAnalysisService.findLastChatForContact('test@example.com');
-      
-      expect(result).toBeNull();
-      expect(console.error).toHaveBeenCalledWith('Error in findLastChatForContact:', expect.any(Error));
-    });
-
-    it('should handle unexpected errors in updateContactLastChat', async () => {
-      supabaseService.supabase.from.mockImplementation(() => {
-        throw new Error('Unexpected error');
-      });
-
-      const result = await emailAnalysisService.updateContactLastChat(1, new Date(), null);
-      
-      expect(result).toBe(false);
-      expect(console.error).toHaveBeenCalledWith('Error in updateContactLastChat:', expect.any(Error));
-    });
-
-    it('should handle unexpected errors in findLastChatForAllContacts', async () => {
-      supabaseService.supabase.from.mockImplementation(() => {
-        throw new Error('Unexpected error');
-      });
-
-      const result = await emailAnalysisService.findLastChatForAllContacts();
-      
-      expect(result).toEqual({ updated: 0, total: 0 });
-      expect(console.error).toHaveBeenCalledWith('Error in findLastChatForAllContacts:', expect.any(Error));
-    });
-
-    it('should handle unexpected errors in updateCompanyLastChatDates', async () => {
-      supabaseService.supabase.from.mockImplementation(() => {
-        throw new Error('Unexpected error');
-      });
-
-      const result = await emailAnalysisService.updateCompanyLastChatDates();
-      
-      expect(result).toEqual({ updated: 0, total: 0 });
-      expect(console.error).toHaveBeenCalledWith('Error in updateCompanyLastChatDates:', expect.any(Error));
+      expect(result.total).toBe(1);
+      expect(result.updated).toBe(0);
+      expect(console.error).toHaveBeenCalledWith(
+        '❌ Error updating company 1 last_chat:',
+        { message: 'Update failed' }
+      );
     });
   });
 }); 

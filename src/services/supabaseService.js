@@ -225,7 +225,20 @@ class SupabaseService {
     const lookupKeys = Object.keys(resolvedPayload).filter(k => k.endsWith('_name'));
 
     for (const key of lookupKeys) {
-      const tableName = key.replace(/_name$/, 's'); // e.g., company_type_name -> company_types
+      let tableName;
+      
+      // Handle special cases for table name mapping
+      if (key === 'company_name') {
+        tableName = 'companies';
+      } else if (key === 'contact_name') {
+        tableName = 'contacts';
+      } else if (key === 'activity_name') {
+        tableName = 'activities';
+      } else {
+        // Default: add 's' to the end (e.g., company_type_name -> company_types)
+        tableName = key.replace(/_name$/, 's');
+      }
+      
       const name = resolvedPayload[key];
       
       try {

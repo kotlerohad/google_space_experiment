@@ -1770,9 +1770,9 @@ const SupabaseIntegration = ({ onMessageLog }) => {
 
     setIsFindingLastChat(true);
     try {
-      onMessageLog?.('🔍 Starting last chat analysis for all contacts...', 'info');
+      onMessageLog?.('🔍 Starting Gmail-based last chat analysis for all contacts...', 'info');
       
-      // Find last chat for all contacts
+      // Find last chat for all contacts using Gmail API
       const contactResults = await emailAnalysisService.findLastChatForAllContacts();
       
       // Update companies based on contact data
@@ -1783,7 +1783,15 @@ const SupabaseIntegration = ({ onMessageLog }) => {
       await fetchData(currentView, 1, false);
       
       const totalUpdated = contactResults.updated + companyResults.updated;
-      onMessageLog?.(`🎉 Analysis complete! Updated ${totalUpdated} records total`, 'success');
+      const totalProcessed = contactResults.total + companyResults.total;
+      const skippedCount = contactResults.skipped || 0;
+      
+      let message = `🎉 Gmail analysis complete! Updated ${totalUpdated} out of ${totalProcessed} records`;
+      if (skippedCount > 0) {
+        message += ` (${skippedCount} contacts had no Gmail correspondence)`;
+      }
+      
+      onMessageLog?.(message, 'success');
       
     } catch (error) {
       console.error('Error finding last chat:', error);
@@ -1899,10 +1907,10 @@ const SupabaseIntegration = ({ onMessageLog }) => {
                 onClick={handleFindLastChat}
                 disabled={isFindingLastChat || isLoading || !records || records.length === 0}
                 className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-300 disabled:cursor-not-allowed text-sm font-medium"
-                title="Find last chat dates from email correspondence"
+                title="Find last chat dates by searching Gmail correspondence"
               >
                 <Search className={`h-4 w-4 ${isFindingLastChat ? 'animate-spin' : ''}`} />
-                {isFindingLastChat ? 'Finding...' : 'Find Last Chat'}
+                {isFindingLastChat ? 'Searching Gmail...' : 'Find Last Chat (Gmail)'}
               </button>
             )}
             
