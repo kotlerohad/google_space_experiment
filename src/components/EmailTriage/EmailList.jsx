@@ -15,10 +15,11 @@ const EmailList = ({ onMessageLog, config }) => {
   const [oauthStatus, setOauthStatus] = useState(emailService.getOAuthStatus());
   const [collapsedEmails, setCollapsedEmails] = useState(new Set()); // Will be populated with all email IDs on load // Track collapsed emails
 
-  // Fuzzy search states
+  // Search states
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
   const searchTimeoutRef = useRef(null);
 
   // Column width state management with localStorage persistence
@@ -46,81 +47,42 @@ const EmailList = ({ onMessageLog, config }) => {
   // Determine which config to use
   const availableConfig = config || contextConfig;
 
-  // Fuzzy search function
-  const fuzzySearchEmails = useCallback((query, emailList) => {
+  // API search function
+  const searchEmailsViaAPI = useCallback(async (query) => {
     if (!query || query.trim() === '') {
       return [];
     }
 
-    const searchTerm = query.toLowerCase().trim();
-    const words = searchTerm.split(/\s+/);
-
-    const scoredEmails = emailList.map(email => {
-      const searchableText = [
-        email.subject || '',
-        email.from || '',
-        email.snippet || '',
-        email.body || ''
-      ].join(' ').toLowerCase();
-
-      let score = 0;
-
-      // Exact phrase match (highest score)
-      if (searchableText.includes(searchTerm)) {
-        score += 100;
-      }
-
-      // Individual word matches
-      words.forEach(word => {
-        if (searchableText.includes(word)) {
-          score += 20;
-        }
-      });
-
-      // Bonus for matches in subject or from (more important fields)
-      const subject = (email.subject || '').toLowerCase();
-      const from = (email.from || '').toLowerCase();
+    try {
+      setIsSearchLoading(true);
+      onMessageLog?.(`Searching entire mailbox for "${query}"...`, 'info');
       
-      if (subject.includes(searchTerm)) {
-        score += 50;
-      }
-      if (from.includes(searchTerm)) {
-        score += 30;
-      }
-
-      words.forEach(word => {
-        if (subject.includes(word)) {
-          score += 10;
-        }
-        if (from.includes(word)) {
-          score += 5;
-        }
-      });
-
-      return { email, score };
-    });
-
-    // filter emails with score > 0 and sort by score descending
-    return scoredEmails
-      .filter(item => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10) // Return top 10 matches
-      .map(item => item.email);
-  }, []);
+      const results = await emailService.searchAllEmails(query, 20);
+      onMessageLog?.(`Found ${results.length} emails matching "${query}" across entire mailbox`, 'success');
+      
+      return results;
+    } catch (error) {
+      const errorMsg = `Search failed: ${error.message}`;
+      onMessageLog?.(errorMsg, 'error');
+      console.error('Email search error:', error);
+      return [];
+    } finally {
+      setIsSearchLoading(false);
+    }
+  }, [onMessageLog]);
 
   // Handle search
-  const handleSearch = useCallback(() => {
+  const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) {
       setIsSearchActive(false);
       setSearchResults([]);
       return;
     }
 
-    const results = fuzzySearchEmails(searchQuery, emails);
+    const results = await searchEmailsViaAPI(searchQuery);
     setSearchResults(results);
     setIsSearchActive(true);
-    onMessageLog?.(`Found ${results.length} emails matching "${searchQuery}"`, 'info');
-  }, [searchQuery, emails, fuzzySearchEmails, onMessageLog]);
+  }, [searchQuery, searchEmailsViaAPI]);
 
   // Handle search input change
   const handleSearchInputChange = (e) => {
@@ -137,13 +99,12 @@ const EmailList = ({ onMessageLog, config }) => {
       setIsSearchActive(false);
       setSearchResults([]);
     } else {
-      // Debounce the search by 300ms
-      searchTimeoutRef.current = setTimeout(() => {
-        const results = fuzzySearchEmails(value, emails);
+      // Debounce the search by 800ms (longer for API calls)
+      searchTimeoutRef.current = setTimeout(async () => {
+        const results = await searchEmailsViaAPI(value);
         setSearchResults(results);
         setIsSearchActive(true);
-        onMessageLog?.(`Found ${results.length} emails matching "${value}"`, 'info');
-      }, 300);
+      }, 800);
     }
   };
 
@@ -1018,10 +979,19 @@ This information would be used to craft more informed and strategic responses th
               </div>
               <button
                 onClick={handleSearch}
-                disabled={!searchQuery.trim() || emails.length === 0}
+                disabled={!searchQuery.trim() || isSearchLoading}
                 className="flex items-center gap-1 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
-                🔍 Search
+                {isSearchLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b border-white"></div>
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    🔍 Search
+                  </>
+                )}
               </button>
             </div>
             
@@ -1051,7 +1021,7 @@ This information would be used to craft more informed and strategic responses th
                 {isSearchActive ? (
                   <>
                     <span className="text-sm text-gray-600">
-                      <strong>{searchResults.length}</strong> of <strong>{emails.length}</strong> emails found
+                      <strong>{searchResults.length}</strong> emails found across entire mailbox
                     </span>
                     <span className="text-sm text-green-600 font-medium">
                       🔍 Searching for: "{searchQuery}"
@@ -1254,22 +1224,32 @@ This information would be used to craft more informed and strategic responses th
         ) : (
           !isLoading && (
             <div className="text-center py-12 bg-gray-50 rounded-lg">
-              <MailIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              {isSearchActive ? (
+              {isSearchLoading ? (
                 <>
-                  <p className="text-gray-500 text-lg font-medium">No emails found</p>
-                  <p className="text-gray-400 text-sm">No emails match your search query "{searchQuery}"</p>
-                  <button
-                    onClick={clearSearch}
-                    className="mt-3 text-blue-600 hover:text-blue-800 underline"
-                  >
-                    Clear search to see all emails
-                  </button>
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto mb-4"></div>
+                  <p className="text-gray-500 text-lg font-medium">Searching entire mailbox...</p>
+                  <p className="text-gray-400 text-sm">Please wait while we search your emails for "{searchQuery}"</p>
                 </>
               ) : (
                 <>
-                  <p className="text-gray-500 text-lg font-medium">No emails loaded</p>
-                  <p className="text-gray-400 text-sm">Click "Fetch Emails" to load your recent emails</p>
+                  <MailIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  {isSearchActive ? (
+                    <>
+                      <p className="text-gray-500 text-lg font-medium">No emails found</p>
+                      <p className="text-gray-400 text-sm">No emails match your search query "{searchQuery}" in your entire mailbox</p>
+                      <button
+                        onClick={clearSearch}
+                        className="mt-3 text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Clear search to see recent emails
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-gray-500 text-lg font-medium">No emails loaded</p>
+                      <p className="text-gray-400 text-sm">Click "Fetch Emails" to load your recent emails</p>
+                    </>
+                  )}
                 </>
               )}
             </div>

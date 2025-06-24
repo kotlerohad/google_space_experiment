@@ -8,7 +8,8 @@ export const EditableTextField = ({
   fieldName, 
   onUpdate, 
   onMessageLog, 
-  placeholder = "Add comment..." 
+  placeholder = "Add comment...",
+  type = "text"
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [value, setValue] = useState(currentValue || '');
@@ -64,32 +65,57 @@ export const EditableTextField = ({
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && e.ctrlKey) {
-      handleSave();
+    const isMultiline = fieldName === 'comments';
+    
+    if (e.key === 'Enter') {
+      if (isMultiline && e.ctrlKey) {
+        // For multiline fields, save on Ctrl+Enter
+        handleSave();
+      } else if (!isMultiline) {
+        // For single-line fields, save on Enter
+        e.preventDefault();
+        handleSave();
+      }
     } else if (e.key === 'Escape') {
       handleCancel();
     }
   };
 
   if (isEditing) {
+    // Use textarea for comments, input for other fields
+    const isMultiline = fieldName === 'comments';
+    
     return (
       <div className="relative max-w-xs">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isUpdating}
-          className="w-full p-2 text-sm border border-blue-300 rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          rows={3}
-          placeholder={placeholder}
-        />
+        {isMultiline ? (
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isUpdating}
+            className="w-full p-2 text-sm border border-blue-300 rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            rows={3}
+            placeholder={placeholder}
+          />
+        ) : (
+          <input
+            ref={textareaRef}
+            type={type}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isUpdating}
+            className="w-full p-2 text-sm border border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder={placeholder}
+          />
+        )}
         <div className="flex gap-1 mt-1">
           <button
             onClick={handleSave}
             disabled={isUpdating}
             className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            title="Ctrl+Enter to save"
+            title={isMultiline ? "Ctrl+Enter to save" : "Enter to save"}
           >
             {isUpdating ? 'Saving...' : 'Save'}
           </button>

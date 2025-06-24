@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linkedin } from 'lucide-react';
+import { Linkedin, Edit } from 'lucide-react';
 import linkedinService from '../../../services/linkedinService';
 import { 
   CompanyTypeDropdown, 
@@ -11,34 +11,69 @@ import {
 import { EditableTextField } from '../components/EditableTextField';
 import LastChatDatePicker from '../LastChatDatePicker';
 
-export const getDisplayValue = (record, column, tableName, groupByColumn, onUpdate, onMessageLog) => {
-  const value = record[column.key];
+// Separate component for LinkedIn URL editing
+const LinkedInUrlEditor = ({ value, record, onUpdate, onMessageLog }) => {
+  const [isEditing, setIsEditing] = React.useState(false);
   
-  if (value === null || value === undefined) {
-    return <span className="text-gray-400 italic">—</span>;
-  }
-  
-  if (typeof value === 'boolean') {
+  if (isEditing) {
     return (
-      <span className={`px-2 py-1 rounded-full text-xs ${value ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-        {value ? 'Yes' : 'No'}
-      </span>
+      <div className="space-y-1">
+        <EditableTextField
+          currentValue={value}
+          recordId={record.id}
+          tableName="contacts"
+          fieldName="linkedin_url"
+          onUpdate={() => {
+            onUpdate?.();
+            setIsEditing(false);
+          }}
+          onMessageLog={onMessageLog}
+          placeholder="Enter LinkedIn URL..."
+          type="url"
+        />
+      </div>
     );
   }
   
-  // Handle dates
-  if (column.key.includes('_at') || column.key === 'timestamp') {
-    try {
-      const date = new Date(value);
-      return (
-        <span className="text-gray-600 text-sm">
-          {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
-      );
-    } catch {
-      return value;
-    }
-  }
+  return (
+    <div className="flex items-center gap-2">
+      {value ? (
+        <a
+          href={value}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-blue-600 hover:text-blue-800 transition-colors text-sm"
+          title="Open LinkedIn profile"
+        >
+          <Linkedin className="w-4 h-4" />
+          <span>Open</span>
+        </a>
+      ) : (
+        <span className="text-gray-400 italic text-sm">No LinkedIn</span>
+      )}
+      <button
+        onClick={() => setIsEditing(true)}
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+        title="Edit LinkedIn URL"
+      >
+        <Edit className="w-3 h-3" />
+      </button>
+      {value && (
+        <ConnectionStatusDropdown
+          currentStatus={record.linkedin_connection_status || 'unknown'}
+          contactId={record.id}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      )}
+    </div>
+  );
+};
+
+export const getDisplayValue = (record, column, tableName, groupByColumn, onUpdate, onMessageLog) => {
+  const value = record[column.key];
+  
+  // Handle interactive fields FIRST - these should work even with null values
   
   // Handle status fields
   if (column.key.includes('status')) {
@@ -57,6 +92,16 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
       return (
         <ContactStatusDropdown
           currentStatus={value}
+          contactId={record.id}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
+    } else if (column.key === 'linkedin_connection_status' && tableName === 'contacts') {
+      // For LinkedIn connection status, show dropdown
+      return (
+        <ConnectionStatusDropdown
+          currentStatus={value || 'unknown'}
           contactId={record.id}
           onUpdate={onUpdate}
           onMessageLog={onMessageLog}
@@ -88,16 +133,151 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
       );
     }
   }
-  
-  // Handle confidence (for triage results)
-  if (column.key === 'confidence') {
-    const confidence = parseInt(value);
-    const color = confidence >= 80 ? 'text-green-600' : confidence >= 60 ? 'text-yellow-600' : 'text-red-600';
-    return <span className={`font-medium ${color}`}>{confidence}%</span>;
+
+  // Handle priority fields with dropdown for companies and contacts
+  if (column.key === 'priority') {
+    if (tableName === 'companies') {
+      // In grouped view, don't show dropdown for the grouping column
+      if (groupByColumn === 'priority') {
+        if (value === null || value === undefined) {
+          return <span className="text-gray-400 italic">—</span>;
+        }
+        const priorityColors = {
+          0: 'bg-purple-100 text-purple-800',   // Top
+          1: 'bg-red-100 text-red-800',        // High
+          2: 'bg-yellow-100 text-yellow-800',  // Medium
+          3: 'bg-green-100 text-green-800'     // Low
+        };
+        const priorityLabels = {
+          0: 'Top',
+          1: 'High',
+          2: 'Medium', 
+          3: 'Low'
+        };
+        const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+        const label = priorityLabels[value] || value;
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+            {label}
+          </span>
+        );
+      }
+      
+      return (
+        <PriorityDropdown
+          currentPriority={value}
+          companyId={record.id}
+          companyTypeId={record.company_type_id}
+          country={record.country}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
+    } else if (tableName === 'contacts') {
+      // For contacts, also show dropdown
+      return (
+        <PriorityDropdown
+          currentPriority={value}
+          contactId={record.id}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          tableName="contacts"
+        />
+      );
+    }
   }
-  
-  // Handle LinkedIn URL with connection status
+
+  // Handle comments field - always editable
+  if (column.key === 'comments') {
+    return (
+      <EditableTextField
+        currentValue={value || ''}
+        recordId={record.id}
+        tableName={tableName}
+        fieldName="comments"
+        onUpdate={onUpdate}
+        onMessageLog={onMessageLog}
+        placeholder={tableName === 'companies' ? "Add company notes..." : "Add contact notes..."}
+      />
+    );
+  }
+
+  // Handle editable text fields for contacts
+  if (tableName === 'contacts') {
+    if (column.key === 'name') {
+      return (
+        <EditableTextField
+          currentValue={value || ''}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="name"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder="Enter contact name..."
+          type="text"
+        />
+      );
+    }
+    
+    if (column.key === 'email') {
+      return (
+        <EditableTextField
+          currentValue={value || ''}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="email"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder="Enter email address..."
+          type="email"
+        />
+      );
+    }
+    
+    if (column.key === 'title') {
+      return (
+        <EditableTextField
+          currentValue={value || ''}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="title"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder="Enter job title..."
+          type="text"
+        />
+      );
+    }
+    
+    if (column.key === 'source') {
+      return (
+        <EditableTextField
+          currentValue={value || ''}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="source"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder="Enter source..."
+          type="text"
+        />
+      );
+    }
+  }
+
+  // Handle LinkedIn URL with connection status - show button with edit pencil for contacts
   if (column.key === 'linkedin_url') {
+    if (tableName === 'contacts') {
+      return (
+        <LinkedInUrlEditor
+          value={value}
+          record={record}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
+    }
+    
     if (!value) {
       return <span className="text-gray-400 italic">—</span>;
     }
@@ -126,43 +306,9 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
       </div>
     );
   }
-  
-  // Handle feedback (for triage results)
-  if (column.key === 'feedback') {
-    if (!value) {
-      return <span className="text-gray-400 italic">—</span>;
-    }
-    return (
-      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-        value === 'good' 
-          ? 'bg-green-100 text-green-800' 
-          : 'bg-red-100 text-red-800'
-      }`}>
-        {value === 'good' ? '👍 Good' : '👎 Poor'}
-      </span>
-    );
-  }
-  
-  // Handle email addresses
-  if (column.key === 'email' && typeof value === 'string' && value.includes('@')) {
-    return (
-      <a href={`mailto:${value}`} className="text-blue-600 hover:text-blue-800 hover:underline">
-        {value}
-      </a>
-    );
-  }
-  
-  // Handle ID references
-  if ((column.key === 'company_id' || column.key === 'related_contact_id') && value) {
-    return (
-      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-mono">
-        #{value}
-      </span>
-    );
-  }
-  
+
   // Handle company type ID with dropdown
-  if (column.key === 'company_type_id' && value && tableName === 'companies') {
+  if (column.key === 'company_type_id' && tableName === 'companies') {
     const companyTypes = {
       1: 'Other',
       2: 'Customer (Bank)',
@@ -204,25 +350,61 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
     );
   }
 
+  // Handle ID references
+  if ((column.key === 'company_id' || column.key === 'related_contact_id') && value) {
+    return (
+      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-mono">
+        #{value}
+      </span>
+    );
+  }
+
   // Handle contacts column - Display as colored pills based on status
-  if (column.key === 'contacts' && value) {
-    if (value === 'No contacts') {
-      return <span className="text-gray-400 italic">{value}</span>;
-    }
-    
+  if (column.key === 'contacts') {
     // If we have structured contact data with status, render as pills
     if (Array.isArray(record.contact_data)) {
       return renderContactPills(record.contact_data);
     }
     
-    // Fallback to original text display for backward compatibility
+    // Handle text-based contact data
+    if (value && value !== 'No contacts') {
+      return (
+        <div className="max-w-xs">
+          <div className="text-sm text-gray-700" title={value}>
+            {value.length > 50 ? `${value.substring(0, 50)}...` : value}
+          </div>
+        </div>
+      );
+    }
+    
+    // No contacts case
+    return <span className="text-gray-400 italic">No contacts</span>;
+  }
+
+  // Handle email addresses for non-contacts tables
+  if (column.key === 'email' && tableName !== 'contacts') {
+    if (typeof value === 'string' && value.includes('@')) {
+      return (
+        <a href={`mailto:${value}`} className="text-blue-600 hover:text-blue-800 hover:underline">
+          {value}
+        </a>
+      );
+    }
+  }
+
+  // Handle long text (summary, etc.)
+  if (typeof value === 'string' && value.length > 100) {
     return (
       <div className="max-w-xs">
-        <div className="text-sm text-gray-700" title={value}>
-          {value.length > 50 ? `${value.substring(0, 50)}...` : value}
+        <div className="truncate" title={value}>
+          {value}
         </div>
       </div>
     );
+  }
+  
+  if (typeof value === 'object') {
+    return <pre className="text-xs bg-gray-100 p-1 rounded max-w-xs overflow-hidden">{JSON.stringify(value, null, 2)}</pre>;
   }
   
   // Handle company name
@@ -290,117 +472,35 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
     }
   }
   
-  // Handle comments field
-  if (column.key === 'comments') {
+  // Handle source fields - always editable
+  if (column.key === 'source') {
     return (
       <EditableTextField
-        currentValue={value}
+        currentValue={value || ''}
         recordId={record.id}
         tableName={tableName}
-        fieldName="comments"
+        fieldName="source"
         onUpdate={onUpdate}
         onMessageLog={onMessageLog}
-        placeholder={tableName === 'companies' ? "Add company notes..." : "Add contact notes..."}
+        placeholder="Enter source..."
+        type="text"
       />
     );
   }
-  
-  // Handle long text (summary, etc.)
-  if (typeof value === 'string' && value.length > 100) {
-    return (
-      <div className="max-w-xs">
-        <div className="truncate" title={value}>
-          {value}
-        </div>
-      </div>
-    );
-  }
-  
-  if (typeof value === 'object') {
-    return <pre className="text-xs bg-gray-100 p-1 rounded max-w-xs overflow-hidden">{JSON.stringify(value, null, 2)}</pre>;
-  }
-  
-  // Handle priority fields with dropdown for companies
-  if (column.key === 'priority') {
-    if (tableName === 'companies') {
-      // In grouped view, don't show dropdown for the grouping column
-      if (groupByColumn === 'priority') {
-        if (value === null || value === undefined) {
-          return <span className="text-gray-400 italic">—</span>;
-        }
-        const priorityColors = {
-          1: 'bg-red-100 text-red-800',    // High
-          2: 'bg-yellow-100 text-yellow-800', // Medium
-          3: 'bg-green-100 text-green-800'    // Low
-        };
-        const priorityLabels = {
-          1: 'High',
-          2: 'Medium', 
-          3: 'Low'
-        };
-        const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
-        const label = priorityLabels[value] || value;
-        return (
-          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-            {label}
-          </span>
-        );
-      }
-      
-      return (
-        <PriorityDropdown
-          currentPriority={value}
-          companyId={record.id}
-          companyTypeId={record.company_type_id}
-          country={record.country}
-          onUpdate={onUpdate}
-          onMessageLog={onMessageLog}
-        />
-      );
-    } else {
-      // For other tables, show static priority
-      if (value === null || value === undefined) {
-        return <span className="text-gray-400 italic">—</span>;
-      }
-      const priorityColors = {
-        0: 'bg-purple-100 text-purple-800',   // Top
-        1: 'bg-red-100 text-red-800',        // High
-        2: 'bg-yellow-100 text-yellow-800',  // Medium
-        3: 'bg-green-100 text-green-800'     // Low
-      };
-      const priorityLabels = {
-        0: 'Top',
-        1: 'High',
-        2: 'Medium', 
-        3: 'Low'
-      };
-      const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
-      const label = priorityLabels[value] || value;
-      return (
-        <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-          {label}
-        </span>
-      );
-    }
-  }
 
-  // Handle source fields
-  if (column.key === 'source') {
-    if (value === null || value === undefined) {
-      return <span className="text-gray-400 italic">—</span>;
-    }
-    const sourceColors = {
-      'Email': 'bg-blue-100 text-blue-800',
-      'Manual': 'bg-gray-100 text-gray-800',
-      'Import': 'bg-yellow-100 text-yellow-800',
-      'API': 'bg-green-100 text-green-800',
-      'Web': 'bg-purple-100 text-purple-800'
-    };
-    const colorClass = sourceColors[value] || 'bg-gray-100 text-gray-800';
+  // Handle country fields - always editable
+  if (column.key === 'country') {
     return (
-      <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-        {value}
-      </span>
+      <EditableTextField
+        currentValue={value || ''}
+        recordId={record.id}
+        tableName={tableName}
+        fieldName="country"
+        onUpdate={onUpdate}
+        onMessageLog={onMessageLog}
+        placeholder="Enter country..."
+        type="text"
+      />
     );
   }
   
@@ -467,7 +567,13 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
     }
   }
   
-  return <span className="text-gray-900">{value.toString()}</span>;
+  // Handle null/undefined values safely
+  if (value === null || value === undefined) {
+    return <span className="text-gray-400 italic">—</span>;
+  }
+  
+  // Default display for other values
+  return <span className="text-gray-900">{String(value)}</span>;
 };
 
 // Helper function to get contact status color
@@ -486,17 +592,49 @@ const renderContactPills = (contactsData) => {
     return <span className="text-gray-400 italic">No contacts</span>;
   }
 
+  // Separate contacts by status
+  const contactsWithStatus = contactsData.filter(contact => 
+    contact.contact_status && 
+    contact.contact_status !== 'None' && 
+    contact.contact_status !== null && 
+    contact.contact_status !== undefined
+  );
+
+  const contactsWithoutStatus = contactsData.filter(contact => 
+    !contact.contact_status || 
+    contact.contact_status === 'None' || 
+    contact.contact_status === null || 
+    contact.contact_status === undefined
+  );
+
   return (
     <div className="flex flex-wrap gap-1 max-w-xs">
-      {contactsData.map((contact, index) => (
+      {/* Render contacts with status using colored pills */}
+      {contactsWithStatus.map((contact, index) => (
         <span
-          key={index}
-          className={`px-2 py-1 rounded-full text-xs font-medium ${getContactStatusColor(contact.status)}`}
-          title={`${contact.name}${contact.email ? ` (${contact.email})` : ''} - Status: ${contact.status || 'None'}`}
+          key={`status-${index}`}
+          className={`px-2 py-1 rounded-full text-xs font-medium ${getContactStatusColor(contact.contact_status)}`}
+          title={`${contact.name}${contact.email ? ` (${contact.email})` : ''} - Status: ${contact.contact_status}`}
         >
           {contact.name}
         </span>
       ))}
+      
+      {/* Render contacts without status using grey pills */}
+      {contactsWithoutStatus.map((contact, index) => (
+        <span
+          key={`no-status-${index}`}
+          className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600"
+          title={`${contact.name}${contact.email ? ` (${contact.email})` : ''} - No Status`}
+        >
+          {contact.name}
+        </span>
+      ))}
+      
+      {/* If no contacts at all, show placeholder */}
+      {contactsWithStatus.length === 0 && contactsWithoutStatus.length === 0 && (
+        <span className="text-gray-400 italic">No contacts</span>
+      )}
     </div>
   );
 };

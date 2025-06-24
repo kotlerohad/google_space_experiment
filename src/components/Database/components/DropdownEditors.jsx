@@ -107,7 +107,7 @@ export const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMess
 };
 
 // Priority Dropdown Component
-export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, onUpdate, onMessageLog }) => {
+export const PriorityDropdown = ({ currentPriority, companyId, contactId, companyTypeId, country, onUpdate, onMessageLog, tableName = 'companies' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -132,8 +132,11 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
     };
   }, [isOpen]);
 
-  // Get suggested priority based on company type and country
+  // Get suggested priority based on company type and country (only for companies)
   const getSuggestedPriority = () => {
+    // No suggestions for contacts - only for companies
+    if (tableName === 'contacts') return null;
+    
     const companyTypes = {
       1: 'Other',
       2: 'Customer (Bank)',
@@ -174,13 +177,16 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
 
     setIsUpdating(true);
     try {
-      const priorityText = newPriority ? priorities[newPriority] : 'None';
-      onMessageLog?.(`Updating company ${companyId} priority to ${priorityText}...`, 'info');
+      const priorityText = (newPriority !== null && newPriority !== undefined) ? priorities[newPriority] : 'None';
+      const recordId = tableName === 'contacts' ? contactId : companyId;
+      const recordType = tableName === 'contacts' ? 'contact' : 'company';
+      
+      onMessageLog?.(`Updating ${recordType} ${recordId} priority to ${priorityText}...`, 'info');
       
       const { error } = await supabaseService.supabase
-        .from('companies')
+        .from(tableName)
         .update({ priority: newPriority })
-        .eq('id', companyId);
+        .eq('id', recordId);
 
       if (error) throw error;
 
@@ -206,8 +212,8 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
   };
 
   const suggestedPriority = getSuggestedPriority();
-  const displayPriority = currentPriority || suggestedPriority;
-  const displayText = displayPriority ? priorities[displayPriority] : null;
+  const displayPriority = (currentPriority !== null && currentPriority !== undefined) ? currentPriority : suggestedPriority;
+  const displayText = (displayPriority !== null && displayPriority !== undefined) ? priorities[displayPriority] : null;
 
   return (
     <div className="relative priority-dropdown">
@@ -215,14 +221,14 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
         onClick={() => setIsOpen(!isOpen)}
         disabled={isUpdating}
         className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${
-          displayPriority ? getPriorityColor(displayPriority) : 'bg-gray-50 text-gray-400 border border-dashed'
+          (displayPriority !== null && displayPriority !== undefined) ? getPriorityColor(displayPriority) : 'bg-gray-50 text-gray-400 border border-dashed'
         } ${
           isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
         }`}
-        title={`Click to change priority${suggestedPriority && !currentPriority ? ` (suggested: ${priorities[suggestedPriority]})` : ''}`}
+        title={`Click to change priority${suggestedPriority && (currentPriority === null || currentPriority === undefined) ? ` (suggested: ${priorities[suggestedPriority]})` : ''}`}
       >
         {isUpdating ? 'Updating...' : (displayText || '—')}
-        {suggestedPriority && !currentPriority && (
+        {suggestedPriority && (currentPriority === null || currentPriority === undefined) && (
           <span className="ml-1 text-xs opacity-60">(suggested)</span>
         )}
         <span className="ml-1 text-xs">▼</span>
@@ -233,7 +239,7 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
           <button
             onClick={() => handlePriorityChange(null)}
             className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
-              !currentPriority ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              (currentPriority === null || currentPriority === undefined) ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
             }`}
           >
             <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
@@ -245,11 +251,11 @@ export const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, co
               onClick={() => handlePriorityChange(parseInt(key))}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
                 parseInt(key) === currentPriority ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
-              } ${parseInt(key) === suggestedPriority && !currentPriority ? 'bg-yellow-50 border-l-2 border-yellow-400' : ''}`}
+              } ${parseInt(key) === suggestedPriority && (currentPriority === null || currentPriority === undefined) ? 'bg-yellow-50 border-l-2 border-yellow-400' : ''}`}
             >
               <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getPriorityColor(parseInt(key)).replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
               {label}
-              {parseInt(key) === suggestedPriority && !currentPriority && (
+              {parseInt(key) === suggestedPriority && (currentPriority === null || currentPriority === undefined) && (
                 <span className="ml-2 text-xs text-yellow-600">(suggested)</span>
               )}
             </button>
