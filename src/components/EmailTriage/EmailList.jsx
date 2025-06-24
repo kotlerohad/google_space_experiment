@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { AppContext } from '../../AppContext';
 import { MailIcon, RefreshIcon, SparklesIcon, ArchiveIcon, ChevronDownIcon, ChevronUpIcon } from '../shared/Icons';
 import TriageResult from './TriageResult';
@@ -15,8 +15,115 @@ const EmailList = ({ onMessageLog, config }) => {
   const [oauthStatus, setOauthStatus] = useState(emailService.getOAuthStatus());
   const [collapsedEmails, setCollapsedEmails] = useState(new Set()); // Will be populated with all email IDs on load // Track collapsed emails
 
+  // Column width state management with localStorage persistence
+  // Users can drag column headers left/right to resize columns
+  // Column widths are automatically saved and restored between sessions
+  const [columnWidths, setColumnWidths] = useState(() => {
+    const savedWidths = localStorage.getItem('emailTable_columnWidths');
+    return savedWidths ? JSON.parse(savedWidths) : {
+      from: 160,     // w-40 equivalent (40 * 4px = 160px)
+      subject: 192,  // w-48 equivalent (48 * 4px = 192px)
+      preview: 300,  // flexible column default
+      date: 80,      // w-20 equivalent (20 * 4px = 80px)
+      status: 128,   // w-32 equivalent (32 * 4px = 128px)
+      actions: 160   // w-40 equivalent (40 * 4px = 160px)
+    };
+  });
+
+  // Resize state management
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizingColumn, setResizingColumn] = useState(null);
+  const [startX, setStartX] = useState(0);
+  const [startWidth, setStartWidth] = useState(0);
+  const tableRef = useRef(null);
+
   // Determine which config to use
   const availableConfig = config || contextConfig;
+
+  // Handle mouse down on resize handle
+  const handleMouseDown = useCallback((e, columnKey) => {
+    e.preventDefault();
+    setIsResizing(true);
+    setResizingColumn(columnKey);
+    setStartX(e.clientX);
+    setStartWidth(columnWidths[columnKey]);
+  }, [columnWidths]);
+
+  // Handle mouse move during resize
+  const handleMouseMove = useCallback((e) => {
+    if (!isResizing || !resizingColumn) return;
+
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(50, startWidth + deltaX); // Minimum width of 50px
+    
+    setColumnWidths(prev => ({
+      ...prev,
+      [resizingColumn]: newWidth
+    }));
+  }, [isResizing, resizingColumn, startX, startWidth]);
+
+  // Handle mouse up to finish resize
+  const handleMouseUp = useCallback(() => {
+    setIsResizing(false);
+    setResizingColumn(null);
+    setStartX(0);
+    setStartWidth(0);
+  }, []);
+
+  // Add global mouse event listeners for resize
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing, handleMouseMove, handleMouseUp]);
+
+  // Save column widths to localStorage with debounce
+  useEffect(() => {
+    const saveTimeout = setTimeout(() => {
+      localStorage.setItem('emailTable_columnWidths', JSON.stringify(columnWidths));
+    }, 300);
+
+    return () => clearTimeout(saveTimeout);
+  }, [columnWidths]);
+
+  // Reset column widths to defaults
+  const resetColumnWidths = useCallback(() => {
+    const defaultWidths = {
+      from: 160,
+      subject: 192,
+      preview: 300,
+      date: 80,
+      status: 128,
+      actions: 160
+    };
+    setColumnWidths(defaultWidths);
+    localStorage.setItem('emailTable_columnWidths', JSON.stringify(defaultWidths));
+  }, []);
+
+  // Resize handle component
+  const ResizeHandle = ({ columnKey }) => (
+    <div
+      className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-400 hover:w-2 transition-all duration-150 bg-transparent"
+      onMouseDown={(e) => handleMouseDown(e, columnKey)}
+      style={{ zIndex: 10 }}
+      title="Drag to resize column"
+    />
+  );
 
   // Log configuration status
   useEffect(() => {
@@ -790,45 +897,60 @@ This information would be used to craft more informed and strategic responses th
                   )}
                 </span>
               </div>
-              <button
-                onClick={handleTriageAll}
-                disabled={isLoading || !openAIService || !isConfigLoaded || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
-                className="flex items-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 text-sm"
-              >
-                <SparklesIcon className="h-4 w-4" />
-                Triage All
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={resetColumnWidths}
+                  className="flex items-center gap-1 bg-gray-500 text-white font-medium py-1.5 px-3 rounded hover:bg-gray-600 transition duration-300 text-xs"
+                  title="Reset column widths to default"
+                >
+                  ↻ Reset Columns
+                </button>
+                <button
+                  onClick={handleTriageAll}
+                  disabled={isLoading || !openAIService || !isConfigLoaded || Object.keys(triageResults).some(id => triageResults[id]?.isLoading)}
+                  className="flex items-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 text-sm"
+                >
+                  <SparklesIcon className="h-4 w-4" />
+                  Triage All
+                </button>
+              </div>
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full bg-white border border-gray-200 rounded-lg table-fixed">
+              <table ref={tableRef} className="w-full bg-white border border-gray-200 rounded-lg table-fixed">
                 <colgroup>
-                  <col className="w-40" />
-                  <col className="w-48" />
-                  <col className="w-auto" />
-                  <col className="w-20" />
-                  <col className="w-32" />
-                  <col className="w-40" />
+                  <col style={{ width: `${columnWidths.from}px` }} />
+                  <col style={{ width: `${columnWidths.subject}px` }} />
+                  <col style={{ width: `${columnWidths.preview}px` }} />
+                  <col style={{ width: `${columnWidths.date}px` }} />
+                  <col style={{ width: `${columnWidths.status}px` }} />
+                  <col style={{ width: `${columnWidths.actions}px` }} />
                 </colgroup>
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       From
+                      <ResizeHandle columnKey="from" />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       Subject
+                      <ResizeHandle columnKey="subject" />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       Preview
+                      <ResizeHandle columnKey="preview" />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       Date
+                      <ResizeHandle columnKey="date" />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       Status
+                      <ResizeHandle columnKey="status" />
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-b relative">
                       Actions
+                      <ResizeHandle columnKey="actions" />
                     </th>
                   </tr>
                 </thead>
