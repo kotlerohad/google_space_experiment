@@ -21,6 +21,11 @@ DATABASE SCHEMA:
 - contact_status (text, default: 'Active')
 - company_id (int, foreign key to companies.id)
 - last_chat (timestamp, nullable) - Date of last email communication
+- source (text, default: 'Manual') - Source of contact: Email, Manual, Import, API, Web, Referral, Event, LinkedIn, Other
+- priority (int, nullable) - Values: 1=High, 2=Medium, 3=Low, null=No priority
+- comments (text, nullable) - General comments and notes about the contact
+- linkedin_url (text, nullable) - LinkedIn profile URL
+- linkedin_connection_status (text, default: 'unknown') - Values: connected, not_connected, unknown, sent_message_no_response
 - created_at (timestamp)
 
 ### companies
@@ -30,10 +35,12 @@ DATABASE SCHEMA:
 - status (text) - Values: "Unqualified" (initial contact), "Qualified" (concrete thinking how to make it happen), "Opportunity" (concrete scope defined), "Pilot" (agreement in place), "Active" (currently active), "Inactive / Closed" (no path forward)
 - company_type_id (int, foreign key to company_types.id)
 - priority (int, nullable) - Values: 0=Top, 1=High, 2=Medium, 3=Low, null=No priority
+- source (text, default: 'Manual') - Source of company: Email, Manual, Import, API, Web, Referral, Event, LinkedIn, Other
 - number_of_employees (int)
 - number_of_developers (int)
 - potential_arr_eur (decimal)
 - last_chat (timestamp, nullable) - Date of most recent communication with any contact from this company
+- comments (text, nullable) - General comments and notes about the company
 - created_at (timestamp)
 - updated_at (timestamp)
 
@@ -415,6 +422,30 @@ If unsure about status, use "Unqualified".
 - Use the most natural/readable name format in your operations (e.g., "Ben Froumine" rather than "Ben.Froumine")
 - The backend will find contacts even if the database has slightly different name formatting
 - When updating contact information, always include both name standardization and the requested updates
+
+### CRITICAL: Contact ID Recognition and Updates
+- When users reference existing contacts with ID numbers in parentheses like "(79)", this means contact ID 79
+- Pattern: "Name (ID)" means update the existing contact with that ID, NOT create a new contact
+- Example: "Shu Ong (79)" means update contact with id=79, name="Shu Ong"
+- ALWAYS use UPDATE action, not INSERT, when contact ID is provided
+- Use the ID in the "where" clause: {"id": 79}
+- Do NOT create new companies when updating existing contacts - only update the contact fields
+
+### CRITICAL: Source Field Usage
+- The "source" field indicates where the contact/company information came from
+- Standard source values: Email, Manual, Import, API, Web, Referral, Event, LinkedIn, Other
+- IMPORTANT: Users can specify custom source values - use EXACTLY what they specify
+- If user says "source is INSEAD", use "INSEAD" as the source value (don't map to LinkedIn/Manual)
+- If user says "source should be INSEAD", use "INSEAD" as the source value
+- Only use standard values (LinkedIn, Manual, etc.) when user doesn't specify a custom source
+- "Connection (Source: INSEAD)" means the title is "Connection" and source context is INSEAD-related
+
+### CRITICAL: Title vs Source Distinction
+- title = job title or role (e.g., "Connection", "CEO", "Developer")
+- source = where the contact info came from (e.g., "LinkedIn", "Email", "Manual")
+- "Connection (Source: INSEAD)" should be parsed as:
+  - title: "Connection"
+  - source: "LinkedIn" (since INSEAD is a business school, likely LinkedIn context)
 
 ### CRITICAL EMAIL FIELD RULES:
 - NEVER use placeholder text like "{{found_email_from_inbox_for_Person}}" or similar templates in the email field
