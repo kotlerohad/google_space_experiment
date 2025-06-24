@@ -533,6 +533,111 @@ class SupabaseService {
     }
     return query;
   }
+
+  // --- Group Ordering Methods ---
+
+  /**
+   * Get the saved group ordering for a specific table and grouping column
+   * @param {string} tableName - The table name (e.g., 'companies', 'contacts')
+   * @param {string} groupByColumn - The column being grouped by (e.g., 'company_type_id')
+   * @returns {Promise<object>} - Object mapping group values to display order
+   */
+  async getGroupOrdering(tableName, groupByColumn) {
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    
+    try {
+      const { data, error } = await this.supabase
+        .from('group_orderings')
+        .select('group_value, display_order')
+        .eq('table_name', tableName)
+        .eq('group_by_column', groupByColumn)
+        .order('display_order');
+      
+      if (error) throw error;
+      
+      // Convert array to object for easy lookup
+      const orderingMap = {};
+      if (data) {
+        data.forEach(row => {
+          orderingMap[row.group_value] = row.display_order;
+        });
+      }
+      
+      return orderingMap;
+    } catch (error) {
+      console.error('Failed to get group ordering:', error);
+      return {}; // Return empty object on error to fall back to default ordering
+    }
+  }
+
+  /**
+   * Save the group ordering for a specific table and grouping column
+   * @param {string} tableName - The table name
+   * @param {string} groupByColumn - The column being grouped by
+   * @param {Array<string>} orderedGroupValues - Array of group values in desired order
+   * @returns {Promise<void>}
+   */
+  async saveGroupOrdering(tableName, groupByColumn, orderedGroupValues) {
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    
+    try {
+      // First, delete existing ordering for this table/column combination
+      const { error: deleteError } = await this.supabase
+        .from('group_orderings')
+        .delete()
+        .eq('table_name', tableName)
+        .eq('group_by_column', groupByColumn);
+      
+      if (deleteError) throw deleteError;
+      
+      // Insert new ordering
+      const orderingRecords = orderedGroupValues.map((groupValue, index) => ({
+        table_name: tableName,
+        group_by_column: groupByColumn,
+        group_value: groupValue,
+        display_order: index + 1,
+        user_id: null // Will be set by RLS policy using auth.uid()
+      }));
+      
+      if (orderingRecords.length > 0) {
+        const { error: insertError } = await this.supabase
+          .from('group_orderings')
+          .insert(orderingRecords);
+        
+        if (insertError) throw insertError;
+      }
+      
+      console.log(`✅ Saved group ordering for ${tableName}.${groupByColumn}:`, orderedGroupValues);
+    } catch (error) {
+      console.error('Failed to save group ordering:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear the saved group ordering for a specific table and grouping column
+   * @param {string} tableName - The table name
+   * @param {string} groupByColumn - The column being grouped by
+   * @returns {Promise<void>}
+   */
+  async clearGroupOrdering(tableName, groupByColumn) {
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    
+    try {
+      const { error } = await this.supabase
+        .from('group_orderings')
+        .delete()
+        .eq('table_name', tableName)
+        .eq('group_by_column', groupByColumn);
+      
+      if (error) throw error;
+      
+      console.log(`✅ Cleared group ordering for ${tableName}.${groupByColumn}`);
+    } catch (error) {
+      console.error('Failed to clear group ordering:', error);
+      throw error;
+    }
+  }
 }
 
 const supabaseService = new SupabaseService();
