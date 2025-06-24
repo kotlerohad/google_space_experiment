@@ -247,9 +247,9 @@ class SupabaseService {
           .from(tableName)
           .select('id')
           .ilike('name', name) // Case-insensitive match
-          .single();
+          .limit(1); // Use limit(1) instead of single() to handle multiple matches
           
-        if (error || !data) {
+        if (error || !data || data.length === 0) {
           // If it's a company lookup and not found, create the company
           if (key === 'company_name') {
             console.log(`🏢 Company "${name}" not found. Creating new company...`);
@@ -278,8 +278,12 @@ class SupabaseService {
           throw new Error(`Could not find ${name} in ${tableName}`);
         }
         
+        // Use the first match if multiple records exist
+        const record = data[0];
+        console.log(`✅ Found existing ${tableName.slice(0, -1)} "${name}" with ID: ${record.id}`);
+        
         const idKey = key.replace(/_name$/, '_id');
-        resolvedPayload[idKey] = data.id;
+        resolvedPayload[idKey] = record.id;
         delete resolvedPayload[key];
       } catch (error) {
         console.error(`Lookup failed for ${key}:`, error);
