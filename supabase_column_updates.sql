@@ -50,4 +50,17 @@ COMMENT ON COLUMN contacts.linkedin_connection_status IS 'LinkedIn connection st
 
 -- Add new company types
 INSERT INTO company_types (id, name) VALUES (6, 'Customer (Software provider)') ON CONFLICT (id) DO NOTHING;
-INSERT INTO company_types (id, name) VALUES (7, 'Customer (Payments)') ON CONFLICT (id) DO NOTHING; 
+INSERT INTO company_types (id, name) VALUES (7, 'Customer (Payments)') ON CONFLICT (id) DO NOTHING;
+INSERT INTO company_types (id, name) VALUES (8, 'Third Party Service Provider') ON CONFLICT (id) DO NOTHING;
+
+-- Add comments columns to companies table
+ALTER TABLE companies 
+ADD COLUMN IF NOT EXISTS comments TEXT DEFAULT NULL;
+
+-- Add comments columns to contacts table
+ALTER TABLE contacts 
+ADD COLUMN IF NOT EXISTS comments TEXT DEFAULT NULL;
+
+-- Add comments for documentation
+COMMENT ON COLUMN companies.comments IS 'General comments and notes about the company';
+COMMENT ON COLUMN contacts.comments IS 'General comments and notes about the contact'; 
