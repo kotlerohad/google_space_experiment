@@ -814,6 +814,107 @@ class EmailService {
       throw error;
     }
   }
+
+  /**
+   * Search across the entire mailbox for emails matching a query
+   * @param {string} searchQuery - The search query to match against email content
+   * @param {number} maxResults - Maximum number of results to return
+   * @returns {Promise<Array>} - Array of email messages matching the search
+   */
+  async searchAllEmails(searchQuery, maxResults = 20) {
+    await this.ensureValidToken();
+
+    try {
+      // Gmail search supports natural language queries
+      // The API will search across subject, body, sender, and recipient fields
+      const query = searchQuery.trim();
+      
+      // Search for messages - include inbox and archived emails
+      const response = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Gmail API search failed: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.messages || data.messages.length === 0) {
+        return [];
+      }
+
+      // Get detailed information for each message with rate limiting
+      const emails = [];
+      const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+      
+      for (let i = 0; i < data.messages.length; i++) {
+        const message = data.messages[i];
+        
+        try {
+          const messageResponse = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
+            {
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          if (!messageResponse.ok) {
+            if (messageResponse.status === 429) {
+              console.warn(`Rate limited on search result ${i + 1}/${data.messages.length}. Waiting 1 second...`);
+              await delay(1000);
+              // Retry the request
+              const retryResponse = await fetch(
+                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.accessToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              if (retryResponse.ok) {
+                const messageData = await retryResponse.json();
+                const parsedEmail = this.parseEmailMessage(messageData);
+                if (parsedEmail) emails.push(parsedEmail);
+              }
+            }
+            continue;
+          }
+
+          const messageData = await messageResponse.json();
+          const parsedEmail = this.parseEmailMessage(messageData);
+          if (parsedEmail) {
+            emails.push(parsedEmail);
+          }
+          
+          // Add small delay between requests to be respectful to the API
+          if (i < data.messages.length - 1) {
+            await delay(50);
+          }
+          
+        } catch (error) {
+          console.warn(`Failed to fetch search result ${message.id}:`, error.message);
+          continue;
+        }
+      }
+
+      // Sort by date (newest first)
+      return emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    } catch (error) {
+      console.error('Error searching all emails:', error);
+      throw error;
+    }
+  }
 }
 
 const emailService = new EmailService();
