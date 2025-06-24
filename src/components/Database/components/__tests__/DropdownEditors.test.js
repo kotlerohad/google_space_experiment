@@ -7,11 +7,11 @@ import {
   StatusDropdown, 
   ConnectionStatusDropdown 
 } from '../DropdownEditors';
-import supabaseService from '../../../services/supabaseService';
-import linkedinService from '../../../services/linkedinService';
+import supabaseService from '../../../../services/supabaseService';
+import linkedinService from '../../../../services/linkedinService';
 
 // Mock services
-jest.mock('../../../services/supabaseService', () => ({
+jest.mock('../../../../services/supabaseService', () => ({
   __esModule: true,
   default: {
     supabase: {
@@ -24,7 +24,7 @@ jest.mock('../../../services/supabaseService', () => ({
   }
 }));
 
-jest.mock('../../../services/linkedinService', () => ({
+jest.mock('../../../../services/linkedinService', () => ({
   __esModule: true,
   default: {
     updateConnectionStatus: jest.fn(() => Promise.resolve())

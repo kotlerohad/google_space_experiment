@@ -1,9 +1,9 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useSupabaseData } from '../hooks/useSupabaseData';
-import supabaseService from '../../../services/supabaseService';
+import { useSupabaseData } from '../useSupabaseData';
+import supabaseService from '../../../../services/supabaseService';
 
 // Mock the supabase service
-jest.mock('../../../services/supabaseService', () => ({
+jest.mock('../../../../services/supabaseService', () => ({
   __esModule: true,
   default: {
     isConnected: jest.fn(() => true),
