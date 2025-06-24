@@ -109,10 +109,12 @@ export const emailAnalysisService = {
         
         console.log(`🔄 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(contacts.length/batchSize)} (contacts ${i+1}-${Math.min(i+batchSize, contacts.length)})`);
         
-        // Process batch with delays to respect Gmail API rate limits
-        const batchResults = await Promise.all(batch.map(async (contact, index) => {
+        // Process each contact in the batch sequentially to avoid closure issues
+        for (let j = 0; j < batch.length; j++) {
+          const contact = batch[j];
+          
           // Add delay between requests to respect rate limits
-          await new Promise(resolve => setTimeout(resolve, index * 200));
+          await new Promise(resolve => setTimeout(resolve, j * 200));
           
           try {
             const existingDate = contact.last_chat ? new Date(contact.last_chat) : null;
@@ -120,19 +122,18 @@ export const emailAnalysisService = {
             
             if (!lastChatDate) {
               skippedCount++;
-              return false;
+              continue;
             }
             
-            return await this.updateContactLastChat(contact.id, contact.email, lastChatDate, existingDate);
+            const updated = await this.updateContactLastChat(contact.id, contact.email, lastChatDate, existingDate);
+            if (updated) {
+              updatedCount++;
+            }
           } catch (error) {
             console.error(`❌ Error processing contact ${contact.name} (${contact.email}):`, error);
             skippedCount++;
-            return false;
           }
-        }));
-        
-        // Count successful updates
-        updatedCount += batchResults.filter(result => result === true).length;
+        }
 
         // Longer delay between batches to be respectful to Gmail API
         if (i + batchSize < contacts.length) {

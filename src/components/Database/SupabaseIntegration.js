@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
 import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X, ChevronDown, Linkedin } from 'lucide-react';
@@ -194,6 +194,7 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
   const [hiddenColumns, setHiddenColumns] = useState([]);
   const [showColumnToggle, setShowColumnToggle] = useState(false);
   const [columnWidths, setColumnWidths] = useState({});
+  // eslint-disable-next-line no-unused-vars
   const [isResizing, setIsResizing] = useState(false);
 
   // Load saved column order, hidden columns, and column widths on component mount
@@ -589,18 +590,37 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     
     // Handle status fields
     if (column.key.includes('status')) {
-      const statusColors = {
-        'Active': 'bg-green-100 text-green-800',
-        'Inactive': 'bg-gray-100 text-gray-800',
-        'Pending': 'bg-yellow-100 text-yellow-800',
-        'Completed': 'bg-blue-100 text-blue-800',
-      };
-      const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
-      return (
-        <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-          {value}
-        </span>
-      );
+      if (column.key === 'status' && tableName === 'companies') {
+        // For companies status, show dropdown
+        return (
+          <StatusDropdown
+            currentStatus={value}
+            companyId={record.id}
+            onUpdate={onUpdate}
+            onMessageLog={onMessageLog}
+          />
+        );
+      } else {
+        // For other status fields, show static display
+        const statusColors = {
+          'Active': 'bg-green-100 text-green-800',
+          'Inactive': 'bg-gray-100 text-gray-800',
+          'Pending': 'bg-yellow-100 text-yellow-800',
+          'Completed': 'bg-blue-100 text-blue-800',
+          'Prospect': 'bg-blue-100 text-blue-800',
+          'Lead': 'bg-purple-100 text-purple-800',
+          'Qualified': 'bg-teal-100 text-teal-800',
+          'Disqualified': 'bg-red-100 text-red-800',
+          'Lost': 'bg-orange-100 text-orange-800',
+          'Proposal': 'bg-indigo-100 text-indigo-800'
+        };
+        const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+            {value}
+          </span>
+        );
+      }
     }
     
     // Handle confidence (for triage results)
@@ -617,7 +637,6 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       }
       
       const connectionStatus = record.linkedin_connection_status || 'unknown';
-      const emoji = linkedinService.getConnectionStatusEmoji(connectionStatus);
       const statusText = linkedinService.getConnectionStatusText(connectionStatus);
       
       return (
@@ -800,15 +819,16 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     
     // Handle comments field
     if (column.key === 'comments') {
-      if (!value) {
-        return <span className="text-gray-400 italic">—</span>;
-      }
       return (
-        <div className="max-w-xs">
-          <div className="text-sm text-gray-700 truncate" title={value}>
-            {value.length > 60 ? `${value.substring(0, 60)}...` : value}
-          </div>
-        </div>
+        <EditableTextField
+          currentValue={value}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="comments"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder={tableName === 'companies' ? "Add company notes..." : "Add contact notes..."}
+        />
       );
     }
     
@@ -870,11 +890,13 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
           return <span className="text-gray-400 italic">—</span>;
         }
         const priorityColors = {
-          1: 'bg-red-100 text-red-800',    // High
-          2: 'bg-yellow-100 text-yellow-800', // Medium
-          3: 'bg-green-100 text-green-800'    // Low
+          0: 'bg-purple-100 text-purple-800',   // Top
+          1: 'bg-red-100 text-red-800',        // High
+          2: 'bg-yellow-100 text-yellow-800',  // Medium
+          3: 'bg-green-100 text-green-800'     // Low
         };
         const priorityLabels = {
+          0: 'Top',
           1: 'High',
           2: 'Medium', 
           3: 'Low'
@@ -1427,6 +1449,123 @@ const TABLE_CONFIG = {
   },
 };
 
+// Editable Text Field Component
+const EditableTextField = ({ currentValue, recordId, tableName, fieldName, onUpdate, onMessageLog, placeholder = "Add comment..." }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [value, setValue] = useState(currentValue || '');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const textareaRef = useRef(null);
+
+  // Update local value when prop changes
+  useEffect(() => {
+    setValue(currentValue || '');
+  }, [currentValue]);
+
+  // Focus and select text when editing starts
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSave = async () => {
+    if (value === (currentValue || '')) {
+      setIsEditing(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const displayValue = value.trim() || 'empty';
+      onMessageLog?.(`Updating ${fieldName} to "${displayValue}"...`, 'info');
+      
+      const { error } = await supabaseService.supabase
+        .from(tableName)
+        .update({ [fieldName]: value.trim() || null })
+        .eq('id', recordId);
+
+      if (error) throw error;
+
+      onMessageLog?.(`✓ Successfully updated ${fieldName}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error(`Failed to update ${fieldName}:`, error);
+      onMessageLog?.(`✗ Failed to update ${fieldName}: ${error.message}`, 'error');
+      setValue(currentValue || ''); // Reset to original value
+    } finally {
+      setIsUpdating(false);
+      setIsEditing(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setValue(currentValue || '');
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      handleCancel();
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <div className="relative max-w-xs">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isUpdating}
+          className="w-full p-2 text-sm border border-blue-300 rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          rows={3}
+          placeholder={placeholder}
+        />
+        <div className="flex gap-1 mt-1">
+          <button
+            onClick={handleSave}
+            disabled={isUpdating}
+            className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            title="Ctrl+Enter to save"
+          >
+            {isUpdating ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            onClick={handleCancel}
+            disabled={isUpdating}
+            className="px-2 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400 disabled:opacity-50"
+            title="Escape to cancel"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      onClick={() => setIsEditing(true)}
+      className="max-w-xs cursor-pointer group"
+      title="Click to edit"
+    >
+      {currentValue ? (
+        <div className="text-sm text-gray-700 p-1 rounded group-hover:bg-gray-50 border border-transparent group-hover:border-gray-200">
+          {currentValue.length > 60 ? `${currentValue.substring(0, 60)}...` : currentValue}
+        </div>
+      ) : (
+        <div className="text-sm text-gray-400 italic p-1 rounded group-hover:bg-gray-50 border border-dashed border-transparent group-hover:border-gray-300">
+          {placeholder}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Company Type Dropdown Component
 const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMessageLog }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -1537,6 +1676,7 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
   const [isUpdating, setIsUpdating] = useState(false);
 
   const priorities = {
+    0: 'Top',
     1: 'High',
     2: 'Medium', 
     3: 'Low'
@@ -1621,9 +1761,10 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
 
   const getPriorityColor = (priority) => {
     const colors = {
-      1: 'bg-red-100 text-red-800',    // High
-      2: 'bg-yellow-100 text-yellow-800', // Medium
-      3: 'bg-green-100 text-green-800'    // Low
+      0: 'bg-purple-100 text-purple-800',   // Top
+      1: 'bg-red-100 text-red-800',        // High
+      2: 'bg-yellow-100 text-yellow-800',  // Medium
+      3: 'bg-green-100 text-green-800'     // Low
     };
     return colors[priority] || 'bg-gray-100 text-gray-800';
   };
@@ -1760,6 +1901,113 @@ const ConnectionStatusDropdown = ({ currentStatus, contactId, onUpdate, onMessag
               }`}
             >
               <span className="mr-2">{option.emoji}</span>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Status Dropdown Component
+const StatusDropdown = ({ currentStatus, companyId, onUpdate, onMessageLog }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const statusOptions = {
+    'Active': { label: 'Active', color: 'bg-green-100 text-green-800' },
+    'Inactive': { label: 'Inactive', color: 'bg-gray-100 text-gray-800' },
+    'Pending': { label: 'Pending', color: 'bg-yellow-100 text-yellow-800' },
+    'Prospect': { label: 'Prospect', color: 'bg-blue-100 text-blue-800' },
+    'Lead': { label: 'Lead', color: 'bg-purple-100 text-purple-800' },
+    'Qualified': { label: 'Qualified', color: 'bg-teal-100 text-teal-800' },
+    'Disqualified': { label: 'Disqualified', color: 'bg-red-100 text-red-800' },
+    'Lost': { label: 'Lost', color: 'bg-orange-100 text-orange-800' },
+    'Proposal': { label: 'Proposal', color: 'bg-indigo-100 text-indigo-800' }
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.status-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleStatusChange = async (newStatus) => {
+    if (newStatus === currentStatus) {
+      setIsOpen(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const statusText = newStatus || 'None';
+      onMessageLog?.(`Updating company ${companyId} status to ${statusText}...`, 'info');
+      
+      const { error } = await supabaseService.supabase
+        .from('companies')
+        .update({ status: newStatus })
+        .eq('id', companyId);
+
+      if (error) throw error;
+
+      onMessageLog?.(`✓ Successfully updated status to ${statusText}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error('Failed to update status:', error);
+      onMessageLog?.(`✗ Failed to update status: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
+      setIsOpen(false);
+    }
+  };
+
+  const currentOption = statusOptions[currentStatus] || { label: currentStatus || 'None', color: 'bg-gray-100 text-gray-800' };
+
+  return (
+    <div className="relative status-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isUpdating}
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${
+          currentStatus ? currentOption.color : 'bg-gray-50 text-gray-400 border border-dashed'
+        } ${
+          isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
+        }`}
+        title="Click to change status"
+      >
+        {isUpdating ? 'Updating...' : currentOption.label}
+        <span className="ml-1 text-xs">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-32">
+          <button
+            onClick={() => handleStatusChange(null)}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
+              !currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+            }`}
+          >
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
+            None
+          </button>
+          {Object.entries(statusOptions).map(([statusKey, option]) => (
+            <button
+              key={statusKey}
+              onClick={() => handleStatusChange(statusKey)}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
+                statusKey === currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              }`}
+            >
+              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${option.color.replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
               {option.label}
             </button>
           ))}

@@ -1,12 +1,11 @@
 import linkedinService from './linkedinService';
+import supabaseService from './supabaseService';
 
 // Mock supabaseService
 jest.mock('./supabaseService', () => ({
   update: jest.fn(),
   getAll: jest.fn(),
 }));
-
-import supabaseService from './supabaseService';
 
 describe('LinkedInService', () => {
   beforeEach(() => {
