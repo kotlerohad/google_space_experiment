@@ -509,7 +509,7 @@ class SupabaseService {
   }
 
   /**
-   * Applies where conditions to a Supabase query, handling null values correctly.
+   * Applies where conditions to a Supabase query, handling null values and arrays correctly.
    * @param {object} query - The Supabase query object
    * @param {object} where - The where conditions
    * @returns {object} - The query with where conditions applied
@@ -522,8 +522,12 @@ class SupabaseService {
       if (value === null) {
         // Use .is() for null comparisons
         query = query.is(key, null);
+      } else if (Array.isArray(value)) {
+        // Use .in() for array comparisons (e.g., WHERE company_id IN (69, 68))
+        console.log(`🔍 Applying IN clause for ${key} with values:`, value);
+        query = query.in(key, value);
       } else {
-        // Use .eq() for non-null comparisons
+        // Use .eq() for single value comparisons
         query = query.eq(key, value);
       }
     }
