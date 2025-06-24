@@ -27,9 +27,9 @@ DATABASE SCHEMA:
 - id (int, primary key)
 - name (text, required)
 - country (text)
-- status (text)
+- status (text) - Values: "Unqualified" (initial contact), "Qualified" (concrete thinking how to make it happen), "Opportunity" (concrete scope defined), "Pilot" (agreement in place), "Active" (currently active), "Inactive / Closed" (no path forward)
 - company_type_id (int, foreign key to company_types.id)
-- priority (int, nullable) - Values: 1=High, 2=Medium, 3=Low, null=No priority
+- priority (int, nullable) - Values: 0=Top, 1=High, 2=Medium, 3=Low, null=No priority
 - number_of_employees (int)
 - number_of_developers (int)
 - potential_arr_eur (decimal)
@@ -79,6 +79,14 @@ DATABASE SCHEMA:
 ### company_types
 - id (int, primary key)
 - name (text, required, unique)
+Available types:
+1: "Other"
+2: "Customer (Bank)"
+3: "Channel Partner"
+4: "Customer (NeoBank)"
+5: "Investor"
+6: "Customer (Software provider)"
+7: "Customer (Payments)"
 
 ### relationship_types
 - id (int, primary key)
@@ -317,6 +325,52 @@ Each operation object must have these exact fields:
 - For priority fields (priority column), use integer values: 1=High, 2=Medium, 3=Low, or null for empty/None. NEVER use string values like "None" or "High" for priority fields.
 - When setting priority to empty/None, use null, not the string "None".
 
+### CRITICAL: Operation Order for Deletions
+- When deleting a company that has contacts, ALWAYS delete the contacts FIRST, then the company
+- When deleting any parent record, delete child records first to avoid foreign key constraint errors
+- Order operations correctly: child records → parent records
+- Example deletion order: contacts → companies, activities → contacts, etc.
+
+Example for deleting company with contacts:
+{
+  "operations": [
+    {
+      "action": "delete",
+      "table": "contacts",
+      "where": {"company_name": "TechCorp"}
+    },
+    {
+      "action": "delete", 
+      "table": "companies",
+      "where": {"name": "TechCorp"}
+    }
+  ]
+}
+
+IMPORTANT: For deleting contacts by company, you can use "company_name" in the where clause and the system will resolve it to the correct company_id.
+
+### CRITICAL: Company-Contact Linking Rules
+- When creating both a company AND a contact in the same batch, link them using "company_name" field in the contact record
+- Use the EXACT same company name in both the company record and the contact's "company_name" field
+- The backend will automatically resolve the company_name to company_id after the company is created
+- NEVER use company_id: null when you know the company name - always use company_name instead
+
+Example for creating linked company and contact:
+{
+  "operations": [
+    {
+      "action": "insert",
+      "table": "companies",
+      "payload": {"name": "Centrico Digital", "company_type_name": "Customer (Software provider)"}
+    },
+    {
+      "action": "insert", 
+      "table": "contacts",
+      "payload": {"name": "Stefano Priola", "email": "stefano.priola@centrico.tech", "company_name": "Centrico Digital"}
+    }
+  ]
+}
+
 ### VALID COMPANY TYPES (use EXACTLY these names):
 - "Other" - for miscellaneous companies
 - "Customer (Bank)" - for banking customers
@@ -332,6 +386,21 @@ When they mention "fintech", "payments", "payment processor", use "Customer (Pay
 When they mention "investor", "VC", "venture capital", use "Investor".
 When they mention "partner", "partnership", use "Channel Partner".
 If unsure, use "Other".
+
+### VALID COMPANY STATUS VALUES (use EXACTLY these names):
+- "Unqualified" - Initial contact stage, just made contact
+- "Qualified" - Concrete thinking about how to make it happen, qualified lead
+- "Opportunity" - Concrete scope defined, real opportunity identified
+- "Pilot" - Agreement in place, pilot or trial phase
+- "Active" - Currently active customer/relationship
+- "Inactive / Closed" - We don't have a path forward, no viable opportunity
+
+IMPORTANT: When users mention terms like "prospect", "lead", use "Unqualified".
+When they mention "opportunity", "deal", use "Opportunity".
+When they mention "trial", "pilot", "agreement", use "Pilot".
+When they mention "customer", "client", use "Active".
+When they mention "closed", "inactive", "dead", "no path", "not viable", use "Inactive / Closed".
+If unsure about status, use "Unqualified".
 
 ### Email Address Processing Rules
 - When the user provides an email address (e.g., "Rebecca.Li@aexp.com"), extract the name from the email prefix

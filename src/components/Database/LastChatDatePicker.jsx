@@ -37,10 +37,15 @@ const LastChatDatePicker = ({ currentDate, contactId, onUpdate, onMessageLog }) 
     if (!newDate) return;
 
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Convert to ISO timestamp
+    const timestamp = new Date(newDate).toISOString();
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(contactId, { last_chat: timestamp });
+    
     try {
-      // Convert to ISO timestamp
-      const timestamp = new Date(newDate).toISOString();
-      
       onMessageLog?.(`Updating contact ${contactId} last chat to ${newDate}...`, 'info');
       
       const { error } = await supabaseService.supabase
@@ -51,11 +56,11 @@ const LastChatDatePicker = ({ currentDate, contactId, onUpdate, onMessageLog }) 
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully updated last chat to ${newDate}`, 'success');
-      onUpdate?.(); // Refresh the data
-      setIsOpen(false);
     } catch (error) {
       console.error('Failed to update last chat:', error);
       onMessageLog?.(`✗ Failed to update last chat: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(contactId, { last_chat: currentDate });
     } finally {
       setIsUpdating(false);
     }
@@ -63,6 +68,12 @@ const LastChatDatePicker = ({ currentDate, contactId, onUpdate, onMessageLog }) 
 
   const handleClearDate = async () => {
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(contactId, { last_chat: null });
+    setSelectedDate('');
+    
     try {
       onMessageLog?.(`Clearing last chat for contact ${contactId}...`, 'info');
       
@@ -74,12 +85,12 @@ const LastChatDatePicker = ({ currentDate, contactId, onUpdate, onMessageLog }) 
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully cleared last chat`, 'success');
-      setSelectedDate('');
-      onUpdate?.(); // Refresh the data
-      setIsOpen(false);
     } catch (error) {
       console.error('Failed to clear last chat:', error);
       onMessageLog?.(`✗ Failed to clear last chat: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(contactId, { last_chat: currentDate });
+      setSelectedDate(currentDate ? new Date(currentDate).toISOString().split('T')[0] : '');
     } finally {
       setIsUpdating(false);
     }
@@ -126,7 +137,7 @@ const LastChatDatePicker = ({ currentDate, contactId, onUpdate, onMessageLog }) 
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3 min-w-64">
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] p-3 min-w-64">
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">

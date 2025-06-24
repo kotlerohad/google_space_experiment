@@ -186,7 +186,7 @@ const ColumnFilterDropdown = ({ column, records, filters, onFiltersChange }) => 
   );
 };
 
-const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNextPage, totalRecords, onLoadMore, onMessageLog, onUpdate, groupByColumn, columnFilters, onFiltersChange }) => {
+const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNextPage, totalRecords, onLoadMore, onMessageLog, onUpdate, onFullRefresh, groupByColumn, columnFilters, onFiltersChange }) => {
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc');
   const [draggedColumn, setDraggedColumn] = useState(null);
@@ -635,16 +635,15 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
           return <span className="text-gray-400 italic">—</span>;
         }
         const statusColors = {
-          'Active': 'bg-green-100 text-green-800',
-          'Inactive': 'bg-gray-100 text-gray-800',
-          'Pending': 'bg-yellow-100 text-yellow-800',
+          'Unqualified': 'bg-gray-100 text-gray-800',
+          'Qualified': 'bg-blue-100 text-blue-800',
+          'Opportunity': 'bg-yellow-100 text-yellow-800',
+          'Pilot': 'bg-green-100 text-green-800',
+          'Active': 'bg-teal-100 text-teal-800',
+          'Inactive / Closed': 'bg-red-100 text-red-800',
+          // Keep some legacy statuses for other tables that might still use them
           'Completed': 'bg-blue-100 text-blue-800',
-          'Prospect': 'bg-blue-100 text-blue-800',
-          'Lead': 'bg-purple-100 text-purple-800',
-          'Qualified': 'bg-teal-100 text-teal-800',
-          'Disqualified': 'bg-red-100 text-red-800',
-          'Lost': 'bg-orange-100 text-orange-800',
-          'Proposal': 'bg-indigo-100 text-indigo-800'
+          'Pending': 'bg-yellow-100 text-yellow-800'
         };
         const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
         return (
@@ -779,8 +778,8 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       );
     }
     
-    // Handle company type ID with dropdown
-    if (column.key === 'company_type_id' && value && tableName === 'companies') {
+    // Handle company type ID with dropdown (including null values)
+    if (column.key === 'company_type_id' && tableName === 'companies') {
       const companyTypes = {
         1: 'Other',
         2: 'Customer (Bank)',
@@ -1480,27 +1479,33 @@ const EditableTextField = ({ currentValue, recordId, tableName, fieldName, onUpd
       return;
     }
 
+    const newValue = value.trim() || null;
     setIsUpdating(true);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(recordId, { [fieldName]: newValue });
+    setIsEditing(false);
+    
     try {
-      const displayValue = value.trim() || 'empty';
+      const displayValue = newValue || 'empty';
       onMessageLog?.(`Updating ${fieldName} to "${displayValue}"...`, 'info');
       
       const { error } = await supabaseService.supabase
         .from(tableName)
-        .update({ [fieldName]: value.trim() || null })
+        .update({ [fieldName]: newValue })
         .eq('id', recordId);
 
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully updated ${fieldName}`, 'success');
-      onUpdate?.(); // Refresh the data
     } catch (error) {
       console.error(`Failed to update ${fieldName}:`, error);
       onMessageLog?.(`✗ Failed to update ${fieldName}: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(recordId, { [fieldName]: currentValue });
       setValue(currentValue || ''); // Reset to original value
     } finally {
       setIsUpdating(false);
-      setIsEditing(false);
     }
   };
 
@@ -1607,6 +1612,11 @@ const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMessageLog 
     }
 
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(companyId, { company_type_id: newTypeId });
+    
     try {
       onMessageLog?.(`Updating company ${companyId} type to ${companyTypes[newTypeId]}...`, 'info');
       
@@ -1618,13 +1628,13 @@ const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMessageLog 
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully updated company type to ${companyTypes[newTypeId]}`, 'success');
-      onUpdate?.(); // Refresh the data
     } catch (error) {
       console.error('Failed to update company type:', error);
       onMessageLog?.(`✗ Failed to update company type: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(companyId, { company_type_id: currentTypeId });
     } finally {
       setIsUpdating(false);
-      setIsOpen(false);
     }
   };
 
@@ -1646,22 +1656,33 @@ const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMessageLog 
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={isUpdating}
-        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${getTypeColor(currentTypeId)} ${
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${
+          currentTypeId ? getTypeColor(currentTypeId) : 'bg-gray-50 text-gray-400 border border-dashed'
+        } ${
           isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
         }`}
         title="Click to change company type"
       >
-        {isUpdating ? 'Updating...' : (companyTypes[currentTypeId] || `Type #${currentTypeId}`)}
+        {isUpdating ? 'Updating...' : (currentTypeId ? companyTypes[currentTypeId] || `Type #${currentTypeId}` : 'None')}
         <span className="ml-1 text-xs">▼</span>
       </button>
 
-      {isOpen && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-48">
+              {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] min-w-48">
+          <button
+            onClick={() => handleTypeChange(null)}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
+              !currentTypeId ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+            }`}
+          >
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
+            None
+          </button>
           {Object.entries(companyTypes).map(([typeId, typeName]) => (
             <button
               key={typeId}
               onClick={() => handleTypeChange(parseInt(typeId))}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
                 parseInt(typeId) === currentTypeId ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
               }`}
             >
@@ -1742,6 +1763,11 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
     }
 
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(companyId, { priority: newPriority });
+    
     try {
       const priorityText = newPriority ? priorities[newPriority] : 'None';
       onMessageLog?.(`Updating company ${companyId} priority to ${priorityText}...`, 'info');
@@ -1754,13 +1780,13 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully updated priority to ${priorityText}`, 'success');
-      onUpdate?.(); // Refresh the data
     } catch (error) {
       console.error('Failed to update priority:', error);
       onMessageLog?.(`✗ Failed to update priority: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(companyId, { priority: currentPriority });
     } finally {
       setIsUpdating(false);
-      setIsOpen(false);
     }
   };
 
@@ -1798,7 +1824,7 @@ const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, 
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-32">
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] min-w-32">
           <button
             onClick={() => handlePriorityChange(null)}
             className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
@@ -1862,19 +1888,24 @@ const ConnectionStatusDropdown = ({ currentStatus, contactId, onUpdate, onMessag
     }
 
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(contactId, { linkedin_connection_status: newStatus });
+    
     try {
       onMessageLog?.(`Updating LinkedIn connection status to ${statusOptions[newStatus].label}...`, 'info');
       
       await linkedinService.updateConnectionStatus(contactId, newStatus);
 
       onMessageLog?.(`✓ Successfully updated LinkedIn connection status to ${statusOptions[newStatus].label}`, 'success');
-      onUpdate?.(); // Refresh the data
     } catch (error) {
       console.error('Failed to update connection status:', error);
       onMessageLog?.(`✗ Failed to update connection status: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(contactId, { linkedin_connection_status: currentStatus });
     } finally {
       setIsUpdating(false);
-      setIsOpen(false);
     }
   };
 
@@ -1896,7 +1927,7 @@ const ConnectionStatusDropdown = ({ currentStatus, contactId, onUpdate, onMessag
       </button>
 
       {isOpen && (
-        <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-56">
+        <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] min-w-56">
           {Object.entries(statusOptions).map(([statusKey, option]) => (
             <button
               key={statusKey}
@@ -1921,15 +1952,12 @@ const StatusDropdown = ({ currentStatus, companyId, onUpdate, onMessageLog }) =>
   const [isUpdating, setIsUpdating] = useState(false);
 
   const statusOptions = {
-    'Active': { label: 'Active', color: 'bg-green-100 text-green-800' },
-    'Inactive': { label: 'Inactive', color: 'bg-gray-100 text-gray-800' },
-    'Pending': { label: 'Pending', color: 'bg-yellow-100 text-yellow-800' },
-    'Prospect': { label: 'Prospect', color: 'bg-blue-100 text-blue-800' },
-    'Lead': { label: 'Lead', color: 'bg-purple-100 text-purple-800' },
-    'Qualified': { label: 'Qualified', color: 'bg-teal-100 text-teal-800' },
-    'Disqualified': { label: 'Disqualified', color: 'bg-red-100 text-red-800' },
-    'Lost': { label: 'Lost', color: 'bg-orange-100 text-orange-800' },
-    'Proposal': { label: 'Proposal', color: 'bg-indigo-100 text-indigo-800' }
+    'Unqualified': { label: 'Unqualified', color: 'bg-gray-100 text-gray-800', description: 'Initial contact stage' },
+    'Qualified': { label: 'Qualified', color: 'bg-blue-100 text-blue-800', description: 'Concrete thinking how to make it happen' },
+    'Opportunity': { label: 'Opportunity', color: 'bg-yellow-100 text-yellow-800', description: 'Concrete scope defined' },
+    'Pilot': { label: 'Pilot', color: 'bg-green-100 text-green-800', description: 'Agreement in place' },
+    'Active': { label: 'Active', color: 'bg-teal-100 text-teal-800', description: 'Currently active' },
+    'Inactive / Closed': { label: 'Inactive / Closed', color: 'bg-red-100 text-red-800', description: 'We don\'t have a path forward' }
   };
 
   // Close dropdown when clicking outside
@@ -1953,6 +1981,11 @@ const StatusDropdown = ({ currentStatus, companyId, onUpdate, onMessageLog }) =>
     }
 
     setIsUpdating(true);
+    setIsOpen(false);
+    
+    // Optimistic update - update UI immediately
+    onUpdate?.(companyId, { status: newStatus });
+    
     try {
       const statusText = newStatus || 'None';
       onMessageLog?.(`Updating company ${companyId} status to ${statusText}...`, 'info');
@@ -1965,13 +1998,13 @@ const StatusDropdown = ({ currentStatus, companyId, onUpdate, onMessageLog }) =>
       if (error) throw error;
 
       onMessageLog?.(`✓ Successfully updated status to ${statusText}`, 'success');
-      onUpdate?.(); // Refresh the data
     } catch (error) {
       console.error('Failed to update status:', error);
       onMessageLog?.(`✗ Failed to update status: ${error.message}`, 'error');
+      // Revert optimistic update on error
+      onUpdate?.(companyId, { status: currentStatus });
     } finally {
       setIsUpdating(false);
-      setIsOpen(false);
     }
   };
 
@@ -1994,26 +2027,22 @@ const StatusDropdown = ({ currentStatus, companyId, onUpdate, onMessageLog }) =>
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-32">
-          <button
-            onClick={() => handleStatusChange(null)}
-            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
-              !currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
-            }`}
-          >
-            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
-            None
-          </button>
-          {Object.entries(statusOptions).map(([statusKey, option]) => (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] min-w-64">
+          {Object.entries(statusOptions).map(([statusKey, statusInfo]) => (
             <button
               key={statusKey}
               onClick={() => handleStatusChange(statusKey)}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
+              className={`w-full text-left px-3 py-3 text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
                 statusKey === currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
               }`}
             >
-              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${option.color.replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
-              {option.label}
+              <div className="flex items-start gap-3">
+                <span className={`inline-block w-3 h-3 rounded-full mt-1 flex-shrink-0 ${statusInfo.color.replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
+                <div>
+                  <div className="font-medium">{statusInfo.label}</div>
+                  <div className="text-xs text-gray-500 mt-1">{statusInfo.description}</div>
+                </div>
+              </div>
             </button>
           ))}
         </div>
@@ -2081,7 +2110,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
       onMessageLog?.(`Loading ${tableName} from Supabase (page ${page})...`, 'info');
       
       const config = TABLE_CONFIG[tableName];
-      const limit = 50;
+      const limit = 100;
       const offset = (page - 1) * limit;
       
       let query;
@@ -2127,7 +2156,8 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             updated_at,
             linkedin_url,
             linkedin_connection_status,
-            companies!inner(name)
+            company_id,
+            companies(name)
           `);
         
         // Count query for pagination
@@ -2291,6 +2321,25 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     fetchData(currentView, 1);
   };
 
+  // Optimistic update function - updates local state immediately without full refresh
+  const handleOptimisticUpdate = useCallback((recordId, updates) => {
+    setRecords(prevRecords => 
+      prevRecords.map(record => 
+        record.id === recordId 
+          ? { ...record, ...updates, updated_at: new Date().toISOString() }
+          : record
+      )
+    );
+  }, []);
+
+  // Full refresh function for when we need to reload everything
+  const handleFullRefresh = useCallback(() => {
+    setCurrentPage(1);
+    setHasNextPage(false);
+    setTotalRecords(0);
+    fetchData(currentView, 1);
+  }, [currentView, fetchData]);
+
   const handleLoadMore = () => {
     if (hasNextPage && !isLoading) {
       fetchData(currentView, currentPage + 1, true);
@@ -2323,7 +2372,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
           const { data: companiesData } = await supabaseService.supabase
             .from('companies')
             .select('id, name, company_type_id')
-            .limit(50);
+            .limit(100);
           if (companiesData) relatedTables.companies = companiesData;
         } catch (error) {
           console.warn('Failed to fetch companies for cleanup analysis:', error);
@@ -2334,7 +2383,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
           const { data: contactsData } = await supabaseService.supabase
             .from('contacts')
             .select('id, name, email, company_id')
-            .limit(50);
+            .limit(100);
           if (contactsData) relatedTables.contacts = contactsData;
         } catch (error) {
           console.warn('Failed to fetch contacts for cleanup analysis:', error);
@@ -2641,7 +2690,8 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         totalRecords={totalRecords}
         onLoadMore={handleLoadMore}
         onMessageLog={onMessageLog}
-        onUpdate={() => fetchData(currentView, 1)}
+        onUpdate={handleOptimisticUpdate}
+        onFullRefresh={handleFullRefresh}
         groupByColumn={groupByColumn}
         columnFilters={columnFilters}
         onFiltersChange={setColumnFilters}

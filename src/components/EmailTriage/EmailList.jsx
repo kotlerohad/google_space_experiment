@@ -15,6 +15,12 @@ const EmailList = ({ onMessageLog, config }) => {
   const [oauthStatus, setOauthStatus] = useState(emailService.getOAuthStatus());
   const [collapsedEmails, setCollapsedEmails] = useState(new Set()); // Will be populated with all email IDs on load // Track collapsed emails
 
+  // Fuzzy search states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  const searchTimeoutRef = useRef(null);
+
   // Column width state management with localStorage persistence
   // Users can drag column headers left/right to resize columns
   // Column widths are automatically saved and restored between sessions
@@ -39,6 +45,131 @@ const EmailList = ({ onMessageLog, config }) => {
 
   // Determine which config to use
   const availableConfig = config || contextConfig;
+
+  // Fuzzy search function
+  const fuzzySearchEmails = useCallback((query, emailList) => {
+    if (!query || query.trim() === '') {
+      return [];
+    }
+
+    const searchTerm = query.toLowerCase().trim();
+    const words = searchTerm.split(/\s+/);
+
+    const scoredEmails = emailList.map(email => {
+      const searchableText = [
+        email.subject || '',
+        email.from || '',
+        email.snippet || '',
+        email.body || ''
+      ].join(' ').toLowerCase();
+
+      let score = 0;
+
+      // Exact phrase match (highest score)
+      if (searchableText.includes(searchTerm)) {
+        score += 100;
+      }
+
+      // Individual word matches
+      words.forEach(word => {
+        if (searchableText.includes(word)) {
+          score += 20;
+        }
+      });
+
+      // Bonus for matches in subject or from (more important fields)
+      const subject = (email.subject || '').toLowerCase();
+      const from = (email.from || '').toLowerCase();
+      
+      if (subject.includes(searchTerm)) {
+        score += 50;
+      }
+      if (from.includes(searchTerm)) {
+        score += 30;
+      }
+
+      words.forEach(word => {
+        if (subject.includes(word)) {
+          score += 10;
+        }
+        if (from.includes(word)) {
+          score += 5;
+        }
+      });
+
+      return { email, score };
+    });
+
+    // filter emails with score > 0 and sort by score descending
+    return scoredEmails
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10) // Return top 10 matches
+      .map(item => item.email);
+  }, []);
+
+  // Handle search
+  const handleSearch = useCallback(() => {
+    if (!searchQuery.trim()) {
+      setIsSearchActive(false);
+      setSearchResults([]);
+      return;
+    }
+
+    const results = fuzzySearchEmails(searchQuery, emails);
+    setSearchResults(results);
+    setIsSearchActive(true);
+    onMessageLog?.(`Found ${results.length} emails matching "${searchQuery}"`, 'info');
+  }, [searchQuery, emails, fuzzySearchEmails, onMessageLog]);
+
+  // Handle search input change
+  const handleSearchInputChange = (e) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+    
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    // Auto-search as user types (with debounce)
+    if (value.trim() === '') {
+      setIsSearchActive(false);
+      setSearchResults([]);
+    } else {
+      // Debounce the search by 300ms
+      searchTimeoutRef.current = setTimeout(() => {
+        const results = fuzzySearchEmails(value, emails);
+        setSearchResults(results);
+        setIsSearchActive(true);
+        onMessageLog?.(`Found ${results.length} emails matching "${value}"`, 'info');
+      }, 300);
+    }
+  };
+
+  // Clear search
+  const clearSearch = () => {
+    setSearchQuery('');
+    setIsSearchActive(false);
+    setSearchResults([]);
+    // Clear any pending search timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+  };
+
+  // Cleanup search timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Get emails to display (search results or all emails)
+  const displayEmails = isSearchActive ? searchResults : emails;
 
   // Handle mouse down on resize handle
   const handleMouseDown = useCallback((e, columnKey) => {
@@ -863,14 +994,46 @@ This information would be used to craft more informed and strategic responses th
             <MailIcon className="h-5 w-5 text-blue-600" />
             <h2 className="text-xl font-semibold text-gray-700">Email Action Decisions</h2>
           </div>
-          <button
-            onClick={fetchEmails}
-            disabled={isLoading || !oauthStatus.hasAccessToken}
-            className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            <RefreshIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            {isLoading ? 'Fetching...' : 'Fetch Emails'}
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Search Input */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search emails..."
+                  value={searchQuery}
+                  onChange={handleSearchInputChange}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={clearSearch}
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={handleSearch}
+                disabled={!searchQuery.trim() || emails.length === 0}
+                className="flex items-center gap-1 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                🔍 Search
+              </button>
+            </div>
+            
+            <button
+              onClick={fetchEmails}
+              disabled={isLoading || !oauthStatus.hasAccessToken}
+              className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              <RefreshIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              {isLoading ? 'Fetching...' : 'Fetch Emails'}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -885,17 +1048,36 @@ This information would be used to craft more informed and strategic responses th
             {/* Table Header with Stats */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-600">
-                  <strong>{emails.length}</strong> emails loaded
-                </span>
-                <span className="text-sm text-gray-500">
-                  {Object.keys(triageResults).filter(id => triageResults[id]?.key_point).length} actions decided
-                  {Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length > 0 && (
-                    <span className="ml-2 text-xs text-blue-600">
-                      ({Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length} from storage)
+                {isSearchActive ? (
+                  <>
+                    <span className="text-sm text-gray-600">
+                      <strong>{searchResults.length}</strong> of <strong>{emails.length}</strong> emails found
                     </span>
-                  )}
-                </span>
+                    <span className="text-sm text-green-600 font-medium">
+                      🔍 Searching for: "{searchQuery}"
+                    </span>
+                    <button
+                      onClick={clearSearch}
+                      className="text-sm text-gray-500 hover:text-gray-700 underline"
+                    >
+                      Clear search
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm text-gray-600">
+                      <strong>{emails.length}</strong> emails loaded
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      {Object.keys(triageResults).filter(id => triageResults[id]?.key_point).length} actions decided
+                      {Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length > 0 && (
+                        <span className="ml-2 text-xs text-blue-600">
+                          ({Object.keys(triageResults).filter(id => triageResults[id]?.isStored).length} from storage)
+                        </span>
+                      )}
+                    </span>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -955,7 +1137,7 @@ This information would be used to craft more informed and strategic responses th
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {emails.map((email, index) => (
+                  {displayEmails.map((email, index) => (
                     <React.Fragment key={email.id}>
                       <tr className={`hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
                         <td className="px-4 py-3 text-sm">
@@ -1073,8 +1255,23 @@ This information would be used to craft more informed and strategic responses th
           !isLoading && (
             <div className="text-center py-12 bg-gray-50 rounded-lg">
               <MailIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500 text-lg font-medium">No emails loaded</p>
-              <p className="text-gray-400 text-sm">Click "Fetch Emails" to load your recent emails</p>
+              {isSearchActive ? (
+                <>
+                  <p className="text-gray-500 text-lg font-medium">No emails found</p>
+                  <p className="text-gray-400 text-sm">No emails match your search query "{searchQuery}"</p>
+                  <button
+                    onClick={clearSearch}
+                    className="mt-3 text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Clear search to see all emails
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-500 text-lg font-medium">No emails loaded</p>
+                  <p className="text-gray-400 text-sm">Click "Fetch Emails" to load your recent emails</p>
+                </>
+              )}
             </div>
           )
         )}

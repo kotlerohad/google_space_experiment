@@ -63,4 +63,21 @@ ADD COLUMN IF NOT EXISTS comments TEXT DEFAULT NULL;
 
 -- Add comments for documentation
 COMMENT ON COLUMN companies.comments IS 'General comments and notes about the company';
-COMMENT ON COLUMN contacts.comments IS 'General comments and notes about the contact'; 
+COMMENT ON COLUMN contacts.comments IS 'General comments and notes about the contact';
+
+-- Update company status values to match new business process
+-- Map old statuses to new business process flow
+UPDATE companies 
+SET status = CASE 
+  WHEN status IN ('Prospect', 'Lead', 'Inactive') THEN 'Unqualified'
+  WHEN status = 'Qualified' THEN 'Qualified'
+  WHEN status IN ('Pending', 'Proposal') THEN 'Opportunity'
+  WHEN status = 'Disqualified' THEN 'Unqualified'
+  WHEN status = 'Lost' THEN 'Unqualified'
+  WHEN status = 'Active' THEN 'Active'
+  ELSE 'Unqualified'
+END
+WHERE status IS NOT NULL;
+
+-- Add comments for the new company status values
+COMMENT ON COLUMN companies.status IS 'Company status in business process: Unqualified (initial contact), Qualified (concrete thinking how to make it happen), Opportunity (concrete scope defined), Pilot (agreement in place), Active (currently active), Inactive / Closed (no path forward)'; 

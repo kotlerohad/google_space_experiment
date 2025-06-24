@@ -399,7 +399,7 @@ class SupabaseService {
             
             // First try the exact match
             let updateQuery = this.supabase.from(table).update(resolvedPayload, { count: 'exact' });
-            updateQuery = this._applyWhereClause(updateQuery, where);
+            updateQuery = await this._applyWhereClause(updateQuery, where);
             const { data: updateData, error: updateError, count: updateCount } = await updateQuery;
             
             if (updateError) throw updateError;
@@ -446,7 +446,7 @@ class SupabaseService {
             
             // First try the exact match
             let deleteQuery = this.supabase.from(table).delete({ count: 'exact' });
-            deleteQuery = this._applyWhereClause(deleteQuery, where);
+            deleteQuery = await this._applyWhereClause(deleteQuery, where);
             const { data: deleteData, error: deleteError, count: deleteCount } = await deleteQuery;
             
             if (deleteError) throw deleteError;
@@ -510,8 +510,11 @@ class SupabaseService {
    * @param {object} where - The where conditions
    * @returns {object} - The query with where conditions applied
    */
-  _applyWhereClause(query, where) {
-    for (const [key, value] of Object.entries(where)) {
+  async _applyWhereClause(query, where) {
+    // Resolve any _name fields in where clause first
+    const resolvedWhere = await this._resolveLookups(where);
+    
+    for (const [key, value] of Object.entries(resolvedWhere)) {
       if (value === null) {
         // Use .is() for null comparisons
         query = query.is(key, null);
