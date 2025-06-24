@@ -89,11 +89,12 @@ describe('DropdownEditors', () => {
 
       await waitFor(() => {
         expect(supabaseService.supabase.from).toHaveBeenCalledWith('companies');
-        expect(mockOnMessageLog).toHaveBeenCalledWith(
-          expect.stringContaining('Updating company 1 type to Channel Partner'),
-          'info'
-        );
       });
+      
+      expect(mockOnMessageLog).toHaveBeenCalledWith(
+        expect.stringContaining('Updating company 1 type to Channel Partner'),
+        'info'
+      );
     });
 
     it('shows updating state during update', async () => {
@@ -313,11 +314,12 @@ describe('DropdownEditors', () => {
 
       await waitFor(() => {
         expect(linkedinService.updateConnectionStatus).toHaveBeenCalledWith(1, 'not_connected');
-        expect(mockOnMessageLog).toHaveBeenCalledWith(
-          expect.stringContaining('Updating LinkedIn connection status to Not Connected'),
-          'info'
-        );
       });
+      
+      expect(mockOnMessageLog).toHaveBeenCalledWith(
+        expect.stringContaining('Updating LinkedIn connection status to Not Connected'),
+        'info'
+      );
     });
   });
 });

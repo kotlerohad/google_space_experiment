@@ -87,11 +87,11 @@ describe('SupabaseIntegration Refactored', () => {
     renderWithContext(<SupabaseIntegration onMessageLog={mockOnMessageLog} />);
     
     await waitFor(() => {
-      // Check for table headers from the config
       expect(screen.getByText('Company Name')).toBeInTheDocument();
-      expect(screen.getByText('Type')).toBeInTheDocument();
-      expect(screen.getByText('Priority')).toBeInTheDocument();
     });
+    
+    expect(screen.getByText('Type')).toBeInTheDocument();
+    expect(screen.getByText('Priority')).toBeInTheDocument();
   });
 
   it('has modular structure with separate components', () => {

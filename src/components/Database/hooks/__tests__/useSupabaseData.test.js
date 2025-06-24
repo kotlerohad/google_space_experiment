@@ -63,9 +63,10 @@ describe('useSupabaseData', () => {
 
     await waitFor(() => {
       expect(result.current.records).toEqual(mockData);
-      expect(result.current.totalRecords).toBe(1);
-      expect(result.current.isLoading).toBe(false);
     });
+    
+    expect(result.current.totalRecords).toBe(1);
+    expect(result.current.isLoading).toBe(false);
 
     expect(mockOnMessageLog).toHaveBeenCalledWith(
       expect.stringContaining('Loading companies from Supabase'),
@@ -92,8 +93,9 @@ describe('useSupabaseData', () => {
 
     await waitFor(() => {
       expect(result.current.error).toContain(errorMessage);
-      expect(result.current.isLoading).toBe(false);
     });
+    
+    expect(result.current.isLoading).toBe(false);
 
     expect(mockOnMessageLog).toHaveBeenCalledWith(
       expect.stringContaining(errorMessage),
@@ -125,9 +127,10 @@ describe('useSupabaseData', () => {
 
     await waitFor(() => {
       expect(result.current.records).toHaveLength(50);
-      expect(result.current.hasNextPage).toBe(true);
-      expect(result.current.totalRecords).toBe(100);
     });
+    
+    expect(result.current.hasNextPage).toBe(true);
+    expect(result.current.totalRecords).toBe(100);
   });
 
   it('loads more data correctly', async () => {
@@ -179,9 +182,10 @@ describe('useSupabaseData', () => {
 
     await waitFor(() => {
       expect(result.current.records).toHaveLength(75);
-      expect(result.current.hasNextPage).toBe(false);
-      expect(result.current.currentPage).toBe(2);
     });
+    
+    expect(result.current.hasNextPage).toBe(false);
+    expect(result.current.currentPage).toBe(2);
   });
 
   it('refreshes data correctly', async () => {
@@ -229,9 +233,10 @@ describe('useSupabaseData', () => {
 
     await waitFor(() => {
       expect(result.current.records).toEqual(refreshedData);
-      expect(result.current.currentPage).toBe(1);
-      expect(result.current.totalRecords).toBe(2);
     });
+    
+    expect(result.current.currentPage).toBe(1);
+    expect(result.current.totalRecords).toBe(2);
   });
 
   it('handles contacts view with search filter', async () => {

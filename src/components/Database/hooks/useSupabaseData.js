@@ -205,7 +205,7 @@ export const useSupabaseData = (tableName, isConfigLoaded, onMessageLog, searchF
       setTotalRecords(0);
       fetchData(1);
     }
-  }, [fetchData]);
+  }, [fetchData, isConfigLoaded]);
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isLoading) {

@@ -25,7 +25,6 @@ export const DataTable = ({
   const [hiddenColumns, setHiddenColumns] = useState([]);
   const [showColumnToggle, setShowColumnToggle] = useState(false);
   const [columnWidths, setColumnWidths] = useState({});
-  const [isResizing, setIsResizing] = useState(false);
 
   // Load saved column order, hidden columns, and column widths on component mount
   useEffect(() => {
@@ -209,9 +208,6 @@ export const DataTable = ({
     e.preventDefault();
     e.stopPropagation();
     
-    setIsResizing(true);
-    document.body.classList.add('resizing');
-    
     const startX = e.clientX;
     const startWidth = columnWidths[columnKey] || 150; // Default width
     
@@ -221,8 +217,6 @@ export const DataTable = ({
     };
     
     const handleMouseUp = () => {
-      setIsResizing(false);
-      document.body.classList.remove('resizing');
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
