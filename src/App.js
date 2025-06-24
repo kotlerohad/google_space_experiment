@@ -27,7 +27,7 @@ const CollapsiblePane = ({ title, children, isCollapsed, onToggle }) => {
 
 const AppContent = () => {
   const { config, isConfigLoaded, onMessageLog } = useContext(AppContext);
-  const [panes, setPanes] = useState({ left: false, right: false });
+  const [panes, setPanes] = useState({ left: true, right: false });
 
   const togglePane = (pane) => {
     setPanes(prev => ({ ...prev, [pane]: !prev[pane] }));
