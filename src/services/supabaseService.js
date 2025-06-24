@@ -242,8 +242,41 @@ class SupabaseService {
       const name = resolvedPayload[key];
       
       try {
-        const { data, error } = await this.supabase.from(tableName).select('id').eq('name', name).single();
-        if (error) throw new Error(`Could not find ${name} in ${tableName}`);
+        // Use case-insensitive matching with ilike
+        const { data, error } = await this.supabase
+          .from(tableName)
+          .select('id')
+          .ilike('name', name) // Case-insensitive match
+          .single();
+          
+        if (error || !data) {
+          // If it's a company lookup and not found, create the company
+          if (key === 'company_name') {
+            console.log(`🏢 Company "${name}" not found. Creating new company...`);
+            
+            const { data: newCompany, error: createError } = await this.supabase
+              .from('companies')
+              .insert({ 
+                name: name,
+                company_type_id: 1, // Default to "Other" type
+                status: 'Active'
+              })
+              .select('id')
+              .single();
+              
+            if (createError) {
+              throw new Error(`Failed to create company "${name}": ${createError.message}`);
+            }
+            
+            console.log(`✅ Created new company "${name}" with ID: ${newCompany.id}`);
+            const idKey = key.replace(/_name$/, '_id');
+            resolvedPayload[idKey] = newCompany.id;
+            delete resolvedPayload[key];
+            continue;
+          }
+          
+          throw new Error(`Could not find ${name} in ${tableName}`);
+        }
         
         const idKey = key.replace(/_name$/, '_id');
         resolvedPayload[idKey] = data.id;
@@ -254,6 +287,69 @@ class SupabaseService {
       }
     }
     return resolvedPayload;
+  }
+
+  /**
+   * Generate name variations for fuzzy matching
+   * @param {string} name - The original name
+   * @returns {Array<string>} - Array of name variations
+   */
+  _generateNameVariations(name) {
+    if (!name || typeof name !== 'string') return [name];
+    
+    const variations = new Set([name]); // Include original
+    
+    // Common variations
+    variations.add(name.replace(/\s+/g, '.')); // "Ben Froumine" -> "Ben.Froumine"
+    variations.add(name.replace(/\./g, ' ')); // "Ben.Froumine" -> "Ben Froumine"
+    variations.add(name.replace(/[.\s]+/g, '')); // "Ben Froumine" -> "BenFroumine"
+    
+    // Handle hyphenated names
+    variations.add(name.replace(/-/g, ' '));
+    variations.add(name.replace(/\s+/g, '-'));
+    
+    // Handle underscores
+    variations.add(name.replace(/_/g, ' '));
+    variations.add(name.replace(/\s+/g, '_'));
+    
+    return Array.from(variations);
+  }
+
+  /**
+   * Smart contact matching that tries different name variations
+   * @param {object} where - The original where clause
+   * @param {string} table - The table name
+   * @returns {Promise<object|null>} - The matched record or null
+   */
+  async _findRecordWithFuzzyMatching(where, table) {
+    // Only apply fuzzy matching for certain tables and fields
+    if (table !== 'contacts' || !where.name) {
+      return null;
+    }
+
+    const originalName = where.name;
+    const nameVariations = this._generateNameVariations(originalName);
+    
+    console.log(`🔍 Trying fuzzy matching for "${originalName}" with variations:`, nameVariations);
+    
+    for (const variation of nameVariations) {
+      try {
+        const { data, error } = await this.supabase
+          .from(table)
+          .select('*')
+          .ilike('name', variation)
+          .limit(1);
+        
+        if (!error && data && data.length > 0) {
+          console.log(`✅ Found match with variation "${variation}":`, data[0]);
+          return { record: data[0], matchedName: variation };
+        }
+      } catch (error) {
+        console.warn(`⚠️ Fuzzy match failed for "${variation}":`, error.message);
+      }
+    }
+    
+    return null;
   }
 
   /**
@@ -300,21 +396,82 @@ class SupabaseService {
           case 'update':
             if (!where) throw new Error('UPDATE operation requires a "where" clause.');
             console.log(`🔹 Executing UPDATE on ${table} with conditions:`, where);
+            
+            // First try the exact match
             let updateQuery = this.supabase.from(table).update(resolvedPayload, { count: 'exact' });
             updateQuery = this._applyWhereClause(updateQuery, where);
             const { data: updateData, error: updateError, count: updateCount } = await updateQuery;
+            
             if (updateError) throw updateError;
-            console.log(`✅ UPDATE successful. Affected rows: ${updateCount || 'unknown'}`, updateData);
+            
+            // If no rows were affected, try fuzzy matching
+            if (updateCount === 0) {
+              console.log('⚠️ No rows affected by UPDATE. Trying fuzzy matching...');
+              
+              const fuzzyMatch = await this._findRecordWithFuzzyMatching(where, table);
+              if (fuzzyMatch) {
+                console.log(`🎯 Found fuzzy match! Updating record ID ${fuzzyMatch.record.id}`);
+                
+                // Update using the found record's ID
+                const { data: fuzzyUpdateData, error: fuzzyUpdateError, count: fuzzyUpdateCount } = await this.supabase
+                  .from(table)
+                  .update(resolvedPayload, { count: 'exact' })
+                  .eq('id', fuzzyMatch.record.id);
+                
+                if (fuzzyUpdateError) throw fuzzyUpdateError;
+                
+                console.log(`✅ Fuzzy UPDATE successful. Affected rows: ${fuzzyUpdateCount || 'unknown'}`, fuzzyUpdateData);
+                
+                // Also update the name to the standardized format if it was different
+                if (fuzzyMatch.matchedName !== (resolvedPayload.name || where.name)) {
+                  const nameToUse = resolvedPayload.name || where.name;
+                  console.log(`🔧 Standardizing name from "${fuzzyMatch.matchedName}" to "${nameToUse}"`);
+                  
+                  await this.supabase
+                    .from(table)
+                    .update({ name: nameToUse })
+                    .eq('id', fuzzyMatch.record.id);
+                }
+              } else {
+                console.log('❌ No fuzzy matches found. UPDATE affected 0 rows.');
+              }
+            } else {
+              console.log(`✅ UPDATE successful. Affected rows: ${updateCount || 'unknown'}`, updateData);
+            }
             break;
 
           case 'delete':
             if (!where) throw new Error('DELETE operation requires a "where" clause.');
             console.log(`🔹 Executing DELETE from ${table} with conditions:`, where);
+            
+            // First try the exact match
             let deleteQuery = this.supabase.from(table).delete({ count: 'exact' });
             deleteQuery = this._applyWhereClause(deleteQuery, where);
             const { data: deleteData, error: deleteError, count: deleteCount } = await deleteQuery;
+            
             if (deleteError) throw deleteError;
-            console.log(`✅ DELETE successful. Affected rows: ${deleteCount || 'unknown'}`, deleteData);
+            
+            // If no rows were affected, try fuzzy matching
+            if (deleteCount === 0) {
+              console.log('⚠️ No rows affected by DELETE. Trying fuzzy matching...');
+              
+              const fuzzyMatch = await this._findRecordWithFuzzyMatching(where, table);
+              if (fuzzyMatch) {
+                console.log(`🎯 Found fuzzy match! Deleting record ID ${fuzzyMatch.record.id}`);
+                
+                const { data: fuzzyDeleteData, error: fuzzyDeleteError, count: fuzzyDeleteCount } = await this.supabase
+                  .from(table)
+                  .delete({ count: 'exact' })
+                  .eq('id', fuzzyMatch.record.id);
+                
+                if (fuzzyDeleteError) throw fuzzyDeleteError;
+                console.log(`✅ Fuzzy DELETE successful. Affected rows: ${fuzzyDeleteCount || 'unknown'}`, fuzzyDeleteData);
+              } else {
+                console.log('❌ No fuzzy matches found. DELETE affected 0 rows.');
+              }
+            } else {
+              console.log(`✅ DELETE successful. Affected rows: ${deleteCount || 'unknown'}`, deleteData);
+            }
             break;
 
           default:

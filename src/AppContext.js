@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import supabaseService from './services/supabaseService';
 import emailService from './services/emailService';
 import openAIService from './services/openAIService';
+import linkedinService from './services/linkedinService';
 
 export const AppContext = createContext();
 
@@ -47,6 +48,10 @@ export const AppProvider = ({ children }) => {
       if (loadedConfig.openaiApiKey) {
         console.log('🔧 AppContext - Setting OpenAI API key:', loadedConfig.openaiApiKey ? 'Key present' : 'Key missing');
         openAIService.setApiKey(loadedConfig.openaiApiKey);
+        
+        // Initialize LinkedIn service with OpenAI capabilities
+        linkedinService.setOpenAIService(openAIService);
+        console.log('🔗 LinkedIn service initialized with OpenAI web search capabilities');
       } else {
         console.warn('🔧 AppContext - OpenAI API key not found in environment variables');
         toast.warning('OpenAI API key not configured. AI features will not be available.');
@@ -136,6 +141,7 @@ export const AppProvider = ({ children }) => {
       openAIService,
       supabaseService,
       emailService,
+      linkedinService,
     }}>
       {children}
     </AppContext.Provider>

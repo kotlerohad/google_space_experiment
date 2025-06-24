@@ -48,17 +48,24 @@ describe('LinkedInService', () => {
         title: 'Software Engineer'
       };
 
-      // Mock successful URL shortening
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        text: () => Promise.resolve('https://tinyurl.com/abc123')
+      // Mock OpenAI service for real search
+      linkedinService.setOpenAIService({
+        performWebSearch: jest.fn().mockResolvedValue([
+          {
+            url: 'https://www.linkedin.com/in/john-smith',
+            title: 'John Smith - Software Engineer',
+            snippet: 'Software Engineer at Tech Corp'
+          }
+        ]),
+        _request: jest.fn().mockResolvedValue({
+          choices: [{ message: { content: 'https://www.linkedin.com/in/john-smith' } }]
+        })
       });
 
       const result = await linkedinService.searchLinkedInProfile(contact);
       
       expect(result.found).toBe(true);
-      expect(result.originalUrl).toContain('linkedin.com/in/john');
-      expect(result.shortUrl).toBe('https://tinyurl.com/abc123');
+      expect(result.originalUrl).toBe('https://www.linkedin.com/in/john-smith');
     });
 
     it('should handle contact with no name', async () => {
@@ -67,28 +74,34 @@ describe('LinkedInService', () => {
         company_name: 'Tech Corp'
       };
 
+      // Mock OpenAI service
+      linkedinService.setOpenAIService({
+        performWebSearch: jest.fn(),
+        _request: jest.fn()
+      });
+
       const result = await linkedinService.searchLinkedInProfile(contact);
       
       expect(result.found).toBe(false);
       expect(result.originalUrl).toBeNull();
-      expect(result.shortUrl).toBeNull();
     });
 
-    it('should handle URL shortening failure gracefully', async () => {
+    it('should handle OpenAI service errors gracefully', async () => {
       const contact = {
         name: 'John Smith',
         email: 'john@company.com'
       };
 
-      // Mock failed URL shortening
-      global.fetch.mockRejectedValueOnce(new Error('Network error'));
+      // Mock OpenAI service with error
+      linkedinService.setOpenAIService({
+        performWebSearch: jest.fn().mockRejectedValue(new Error('Search failed')),
+        _request: jest.fn()
+      });
 
       const result = await linkedinService.searchLinkedInProfile(contact);
       
-      if (result.found) {
-        // Should fall back to original URL if shortening fails
-        expect(result.shortUrl).toBe(result.originalUrl);
-      }
+      expect(result.found).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 
@@ -96,8 +109,7 @@ describe('LinkedInService', () => {
     it('should update contact with LinkedIn data', async () => {
       const contactId = 123;
       const linkedinData = {
-        originalUrl: 'https://linkedin.com/in/john-smith',
-        shortUrl: 'https://tinyurl.com/abc123',
+        originalUrl: 'https://www.linkedin.com/in/john-smith',
         found: true
       };
 
@@ -106,7 +118,7 @@ describe('LinkedInService', () => {
       await linkedinService.updateContactLinkedIn(contactId, linkedinData, 'connected');
 
       expect(supabaseService.update).toHaveBeenCalledWith('contacts', contactId, {
-        linkedin_url: 'https://tinyurl.com/abc123',
+        linkedin: 'https://www.linkedin.com/in/john-smith',
         linkedin_connection_status: 'connected'
       });
     });
@@ -114,7 +126,8 @@ describe('LinkedInService', () => {
     it('should handle database update errors', async () => {
       const contactId = 123;
       const linkedinData = {
-        shortUrl: 'https://tinyurl.com/abc123'
+        originalUrl: 'https://www.linkedin.com/in/john-smith',
+        found: true
       };
 
       supabaseService.update.mockRejectedValueOnce(new Error('Database error'));
@@ -153,17 +166,25 @@ describe('LinkedInService', () => {
     it('should process all contacts and return results', async () => {
       const mockContacts = [
         { id: 1, name: 'John Smith', email: 'john@company.com' },
-        { id: 2, name: 'Jane Doe', email: 'jane@company.com', linkedin_url: 'existing-url' },
+        { id: 2, name: 'Jane Doe', email: 'jane@company.com', linkedin: 'existing-url' },
         { id: 3, name: 'Bob Wilson', email: 'bob@company.com' }
       ];
 
       supabaseService.getAll.mockResolvedValueOnce(mockContacts);
       supabaseService.update.mockResolvedValue({ success: true });
 
-      // Mock URL shortening
-      global.fetch.mockResolvedValue({
-        ok: true,
-        text: () => Promise.resolve('https://tinyurl.com/mock123')
+      // Mock OpenAI service for real search
+      linkedinService.setOpenAIService({
+        performWebSearch: jest.fn().mockResolvedValue([
+          {
+            url: 'https://www.linkedin.com/in/john-smith',
+            title: 'John Smith Profile',
+            snippet: 'Professional profile'
+          }
+        ]),
+        _request: jest.fn().mockResolvedValue({
+          choices: [{ message: { content: 'https://www.linkedin.com/in/john-smith' } }]
+        })
       });
 
       const mockProgressCallback = jest.fn();
@@ -181,6 +202,20 @@ describe('LinkedInService', () => {
 
       supabaseService.getAll.mockResolvedValueOnce(mockContacts);
       supabaseService.update.mockRejectedValueOnce(new Error('Update failed'));
+
+      // Mock OpenAI service for real search
+      linkedinService.setOpenAIService({
+        performWebSearch: jest.fn().mockResolvedValue([
+          {
+            url: 'https://www.linkedin.com/in/john-smith',
+            title: 'John Smith Profile',
+            snippet: 'Professional profile'
+          }
+        ]),
+        _request: jest.fn().mockResolvedValue({
+          choices: [{ message: { content: 'https://www.linkedin.com/in/john-smith' } }]
+        })
+      });
 
       const results = await linkedinService.findLinkedInForAllContacts();
 

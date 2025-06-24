@@ -20,6 +20,7 @@ DATABASE SCHEMA:
 - phone (text)
 - contact_status (text, default: 'Active')
 - company_id (int, foreign key to companies.id)
+- last_chat (timestamp, nullable) - Date of last email communication
 - created_at (timestamp)
 
 ### companies
@@ -32,6 +33,7 @@ DATABASE SCHEMA:
 - number_of_employees (int)
 - number_of_developers (int)
 - potential_arr_eur (decimal)
+- last_chat (timestamp, nullable) - Date of most recent communication with any contact from this company
 - created_at (timestamp)
 - updated_at (timestamp)
 
@@ -161,27 +163,119 @@ DATABASE SCHEMA:
       throw new Error("Database schema is not set. Cannot generate DB operations.");
     }
 
+    // Check if the instruction involves adding an email address
+    const emailAddressMatch = userInstruction.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    let companyResearch = null;
+    let emailHistory = null;
+    
+    if (emailAddressMatch) {
+      const email = emailAddressMatch[1];
+      const domain = email.split('@')[1];
+      
+      console.log(`📧 Processing email address: ${email}`);
+      console.log(`🏢 Analyzing domain: ${domain}`);
+      
+      // Use OpenAI to identify the company from the domain
+      try {
+        companyResearch = await this.identifyCompanyFromDomain(domain);
+        console.log(`🔍 Company research completed for ${domain}`);
+      } catch (error) {
+        console.warn(`Company research failed for ${domain}:`, error);
+      }
+      
+      // Check email history with this contact
+      try {
+        emailHistory = await this.checkEmailHistory(email);
+        console.log(`📧 Email history check completed for ${email}`);
+      } catch (error) {
+        console.warn(`Email history check failed for ${email}:`, error);
+      }
+    }
+
     // Check if the instruction involves searching emails
     const needsEmailSearch = userInstruction.toLowerCase().includes('inbox') || 
                            userInstruction.toLowerCase().includes('email') ||
                            userInstruction.toLowerCase().includes('check my') ||
                            userInstruction.toLowerCase().includes('find his contact details') ||
-                           userInstruction.toLowerCase().includes('find her contact details');
+                           userInstruction.toLowerCase().includes('find her contact details') ||
+                           userInstruction.toLowerCase().includes('searching my inbox') ||
+                           userInstruction.toLowerCase().includes('search my inbox');
 
     let emailSearchResults = null;
     if (needsEmailSearch) {
-      // Extract the person's name from the instruction
-      const nameMatch = userInstruction.match(/add\s+([^as]+)\s+as/i);
+      // Extract the person's name from various command patterns
+      let personName = null;
+      
+      // Pattern 1: "add [name] as a contact"
+      let nameMatch = userInstruction.match(/add\s+([^as]+)\s+as/i);
       if (nameMatch) {
-        const personName = nameMatch[1].trim();
+        personName = nameMatch[1].trim();
+      }
+      
+      // Pattern 2: "update [name]'s email" or "update [name] email"
+      if (!personName) {
+        nameMatch = userInstruction.match(/update\s+([^'s]+)(?:'s)?\s+email/i);
+        if (nameMatch) {
+          personName = nameMatch[1].trim();
+        }
+      }
+      
+      // Pattern 2b: "update [name] by searching" or similar
+      if (!personName) {
+        nameMatch = userInstruction.match(/update\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]*)*(?:\.[A-Z][a-z]*)*)\s+(?:by|email|contact)/i);
+        if (nameMatch) {
+          personName = nameMatch[1].trim();
+        }
+      }
+      
+      // Pattern 3: "[name]'s email" or "[name] email"
+      if (!personName) {
+        nameMatch = userInstruction.match(/([a-zA-Z\s.]+)(?:'s)?\s+email/i);
+        if (nameMatch) {
+          const candidate = nameMatch[1].trim();
+          // Make sure it's not a generic word like "his", "her", "the", etc.
+          if (!['his', 'her', 'the', 'their', 'my', 'your', 'our'].includes(candidate.toLowerCase())) {
+            personName = candidate;
+          }
+        }
+      }
+      
+      // Pattern 4: "search for [name]" or "find [name]"
+      if (!personName) {
+        nameMatch = userInstruction.match(/(?:search for|find)\s+([a-zA-Z\s.]+?)(?:\s+(?:in|by|email|contact))/i);
+        if (nameMatch) {
+          personName = nameMatch[1].trim();
+        }
+      }
+      
+      // Pattern 5: Extract name from context (look for capitalized names)
+      if (!personName) {
+        const capitalizedNames = userInstruction.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]*)*\b/g);
+        if (capitalizedNames) {
+          // Filter out common words and find the most likely name
+          const filteredNames = capitalizedNames.filter(name => 
+            !['Ben', 'Gmail', 'Email', 'Contact', 'Update', 'Search', 'Find', 'Inbox'].includes(name) &&
+            name.length > 2
+          );
+          if (filteredNames.length > 0) {
+            personName = filteredNames[0]; // Take the first likely name
+          }
+        }
+      }
+      
+      if (personName) {
         console.log(`🔍 Searching emails for contact details of: ${personName}`);
         
         try {
           emailSearchResults = await this.searchEmailsForContact(personName);
+          console.log(`📧 Email search completed for: ${personName}`);
+          console.log(`📋 Search results: ${emailSearchResults.substring(0, 200)}...`);
         } catch (error) {
           console.warn('Email search failed:', error);
           emailSearchResults = `Unable to search emails: ${error.message}`;
         }
+      } else {
+        console.log(`⚠️ Could not extract person name from command: "${userInstruction}"`);
       }
     }
 
@@ -223,7 +317,32 @@ Each operation object must have these exact fields:
 - For priority fields (priority column), use integer values: 1=High, 2=Medium, 3=Low, or null for empty/None. NEVER use string values like "None" or "High" for priority fields.
 - When setting priority to empty/None, use null, not the string "None".
 
-${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nUse the information above to populate contact details when creating the contact record.` : ''}`;
+### Email Address Processing Rules
+- When the user provides an email address (e.g., "Rebecca.Li@aexp.com"), extract the name from the email prefix
+- Use the company research to create a company record first, then link the contact to that company
+- Set the contact's last_chat field based on the email history information
+- For email addresses like "Rebecca.Li@aexp.com", the name should be "Rebecca Li" (replace dots/underscores with spaces, capitalize properly)
+- Always create both company AND contact records when processing email addresses
+- Use the domain research to determine appropriate company_type_name (e.g., "Financial Services", "Technology", etc.)
+
+### Smart Contact Matching
+- When updating contacts by name, the system will automatically handle name variations (spaces vs periods, etc.)
+- Use the most natural/readable name format in your operations (e.g., "Ben Froumine" rather than "Ben.Froumine")
+- The backend will find contacts even if the database has slightly different name formatting
+- When updating contact information, always include both name standardization and the requested updates
+
+### CRITICAL EMAIL FIELD RULES:
+- NEVER use placeholder text like "{{found_email_from_inbox_for_Person}}" or similar templates in the email field
+- ONLY use actual email addresses that were found in the email search results
+- If no actual email address is found, leave the email field empty (null) or omit it entirely
+- Valid email format: user@domain.com (must contain @ and valid domain)
+- If email search results show "❌ No email addresses found", do NOT include an email field in the contact data
+
+${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nIMPORTANT: Only use actual email addresses from the "✅ Email addresses found:" line above. If that line shows no emails or is missing, do NOT include an email field in the contact record.` : ''}
+
+${companyResearch ? `\n### Company Research Results:\n${companyResearch}\n\nIMPORTANT: Use this company information to create the company record first, then link the contact to that company.` : ''}
+
+${emailHistory ? `\n### Email History:\n${emailHistory}\n\nIMPORTANT: This shows the last communication with this contact. Consider this information when creating the contact record.` : ''}`;
 
     const userPrompt = userInstruction;
 
@@ -262,6 +381,109 @@ ${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nUs
   }
 
   /**
+   * Identify company information from a domain using OpenAI
+   * @param {string} domain - The domain to research (e.g., "aexp.com")
+   * @returns {Promise<string>} - Company information and insights
+   */
+  async identifyCompanyFromDomain(domain) {
+    try {
+      console.log(`🔍 Researching company domain: ${domain}`);
+      
+      const prompt = `Analyze the domain "${domain}" and provide comprehensive company information.
+
+Please provide:
+1. Full company name (e.g., "aexp.com" → "American Express")
+2. Company type/industry (e.g., "Financial Services", "Technology", "Healthcare")
+3. Brief company description
+4. Headquarters location if known
+5. Company size estimate (if available)
+6. Any notable recent news or developments
+
+Format your response as structured information that can be used to create a database record.
+
+Domain to analyze: ${domain}`;
+
+      const payload = {
+        model: this.model,
+        messages: [
+          { 
+            role: "system", 
+            content: "You are a company research expert. Provide accurate, factual information about companies based on their domains. Focus on well-known, established companies and be clear about any uncertainty." 
+          },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 500
+      };
+
+      const response = await this._request(payload);
+      const companyInfo = response.choices[0].message.content.trim();
+      
+      console.log(`✅ Company research completed for ${domain}`);
+      return companyInfo;
+      
+    } catch (error) {
+      console.error(`Company research failed for ${domain}:`, error);
+      throw new Error(`Failed to research company domain ${domain}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check email history with a specific contact
+   * @param {string} email - The email address to check history for
+   * @returns {Promise<string>} - Email history information
+   */
+  async checkEmailHistory(email) {
+    try {
+      console.log(`📧 Checking email history for: ${email}`);
+      
+      // Import email service dynamically to avoid circular dependencies
+      const { default: emailService } = await import('./emailService');
+      
+      // Search for recent emails with this contact
+      const emails = await emailService.searchEmails(email, 5);
+      
+      if (!emails || emails.length === 0) {
+        return `No email history found with ${email}. This would be a new contact.`;
+      }
+      
+      // Get the most recent email
+      const lastEmail = emails[0];
+      const lastEmailDate = new Date(lastEmail.date);
+      const daysSinceLastEmail = Math.floor((new Date() - lastEmailDate) / (1000 * 60 * 60 * 24));
+      
+      let historyInfo = `📧 Email History with ${email}:\n`;
+      historyInfo += `📅 Last email: ${lastEmailDate.toLocaleDateString()} (${daysSinceLastEmail} days ago)\n`;
+      historyInfo += `📝 Subject: "${lastEmail.subject}"\n`;
+      historyInfo += `👤 From: ${lastEmail.from}\n`;
+      historyInfo += `📊 Total emails found: ${emails.length}\n`;
+      
+      // Add context about email frequency
+      if (daysSinceLastEmail <= 7) {
+        historyInfo += `🟢 Recent contact - active communication\n`;
+      } else if (daysSinceLastEmail <= 30) {
+        historyInfo += `🟡 Moderate contact - monthly communication\n`;
+      } else if (daysSinceLastEmail <= 90) {
+        historyInfo += `🟠 Infrequent contact - quarterly communication\n`;
+      } else {
+        historyInfo += `🔴 Rare contact - infrequent communication\n`;
+      }
+      
+      // Add snippet from most recent email if available
+      if (lastEmail.snippet) {
+        historyInfo += `📄 Recent context: "${lastEmail.snippet}"\n`;
+      }
+      
+      console.log(`✅ Email history check completed for ${email}`);
+      return historyInfo;
+      
+    } catch (error) {
+      console.error(`Email history check failed for ${email}:`, error);
+      return `Unable to check email history for ${email}: ${error.message}`;
+    }
+  }
+
+  /**
    * Search emails for contact information about a specific person
    * @param {string} personName - The name of the person to search for
    * @returns {Promise<string>} - Formatted contact information found in emails
@@ -271,67 +493,67 @@ ${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nUs
       // Import email service dynamically to avoid circular dependencies
       const { default: emailService } = await import('./emailService');
       
-      // Search for emails containing the person's name
-      const searchQuery = `"${personName}"`;
-      const emails = await emailService.searchEmails(searchQuery, 10);
+      console.log(`🔍 Searching for contact: "${personName}"`);
       
-      if (!emails || emails.length === 0) {
-        return `No emails found containing "${personName}".`;
+      // Create multiple search variations for better matching
+      const searchVariations = this.generateNameVariations(personName);
+      console.log(`📝 Search variations: ${searchVariations.join(', ')}`);
+      
+      let allEmails = [];
+      
+      // Search with each variation
+      for (const variation of searchVariations) {
+        try {
+          const emails = await emailService.searchEmails(variation, 5);
+          if (emails && emails.length > 0) {
+            console.log(`✅ Found ${emails.length} emails for "${variation}"`);
+            allEmails.push(...emails);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Search failed for "${variation}":`, error.message);
+        }
+      }
+      
+      // Remove duplicates based on email ID
+      const uniqueEmails = allEmails.filter((email, index, self) => 
+        index === self.findIndex(e => e.id === email.id)
+      );
+      
+      if (uniqueEmails.length === 0) {
+        return `No emails found for "${personName}" or similar name variations.`;
       }
 
+      console.log(`📧 Found ${uniqueEmails.length} unique emails to analyze`);
+
       // Extract contact information from the emails
-      let contactInfo = `Found ${emails.length} emails mentioning "${personName}":\n\n`;
+      const extractedInfo = this.extractContactInfoFromEmails(uniqueEmails, personName);
       
-      const extractedEmails = new Set();
-      const extractedPhones = new Set();
-      const extractedTitles = new Set();
-      const extractedCompanies = new Set();
+      // Format the results
+      let contactInfo = `Found ${uniqueEmails.length} emails related to "${personName}":\n\n`;
       
-      for (const email of emails.slice(0, 5)) { // Limit to first 5 emails
-        const content = `${email.subject} ${email.snippet || ''}`;
-        
-        // Extract email addresses
-        const emailMatches = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
-        if (emailMatches) {
-          emailMatches.forEach(e => extractedEmails.add(e));
-        }
-        
-        // Extract phone numbers
-        const phoneMatches = content.match(/\+?[\d\s\-\(\)]{10,}/g);
-        if (phoneMatches) {
-          phoneMatches.forEach(p => extractedPhones.add(p.trim()));
-        }
-        
-        // Extract potential titles (common job titles)
-        const titleMatches = content.match(/\b(CEO|CTO|CFO|VP|Director|Manager|Senior|Lead|Head of|President|Founder)\s+[A-Za-z\s]+/gi);
-        if (titleMatches) {
-          titleMatches.forEach(t => extractedTitles.add(t.trim()));
-        }
-        
-        // Extract company names (look for @domain patterns and common company indicators)
-        const companyMatches = content.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g);
-        if (companyMatches) {
-          companyMatches.forEach(c => {
-            const domain = c.substring(1);
-            if (!domain.includes('gmail.com') && !domain.includes('yahoo.com') && !domain.includes('outlook.com')) {
-              extractedCompanies.add(domain);
-            }
-          });
-        }
+      if (extractedInfo.emails.size > 0) {
+        contactInfo += `✅ Email addresses found: ${Array.from(extractedInfo.emails).join(', ')}\n`;
+      } else {
+        contactInfo += `❌ No email addresses found in email content\n`;
       }
       
-      if (extractedEmails.size > 0) {
-        contactInfo += `Email addresses: ${Array.from(extractedEmails).join(', ')}\n`;
+      if (extractedInfo.phones.size > 0) {
+        contactInfo += `📞 Phone numbers: ${Array.from(extractedInfo.phones).join(', ')}\n`;
       }
-      if (extractedPhones.size > 0) {
-        contactInfo += `Phone numbers: ${Array.from(extractedPhones).join(', ')}\n`;
+      
+      if (extractedInfo.titles.size > 0) {
+        contactInfo += `💼 Job titles: ${Array.from(extractedInfo.titles).join(', ')}\n`;
       }
-      if (extractedTitles.size > 0) {
-        contactInfo += `Potential titles: ${Array.from(extractedTitles).join(', ')}\n`;
+      
+      if (extractedInfo.companies.size > 0) {
+        contactInfo += `🏢 Companies/domains: ${Array.from(extractedInfo.companies).join(', ')}\n`;
       }
-      if (extractedCompanies.size > 0) {
-        contactInfo += `Associated domains/companies: ${Array.from(extractedCompanies).join(', ')}\n`;
-      }
+      
+      // Add sample email content for context
+      contactInfo += `\n📋 Sample email context:\n`;
+      uniqueEmails.slice(0, 2).forEach((email, index) => {
+        contactInfo += `${index + 1}. From: ${email.from}\n   Subject: ${email.subject}\n   Snippet: ${email.snippet || 'No preview'}\n\n`;
+      });
       
       return contactInfo;
       
@@ -339,6 +561,128 @@ ${emailSearchResults ? `\n### Email Search Results:\n${emailSearchResults}\n\nUs
       console.error('Email search failed:', error);
       throw new Error(`Failed to search emails: ${error.message}`);
     }
+  }
+
+  /**
+   * Generate name variations for better email searching
+   * @param {string} personName - The original name
+   * @returns {Array<string>} - Array of name variations to search
+   */
+  generateNameVariations(personName) {
+    const variations = new Set();
+    
+    // Original name
+    variations.add(`"${personName}"`);
+    
+    // Split into parts
+    const nameParts = personName.split(/[\s.]+/).filter(part => part.length > 1);
+    
+    if (nameParts.length >= 2) {
+      const [first, ...rest] = nameParts;
+      const last = rest[rest.length - 1];
+      
+      // Common variations
+      variations.add(`"${first} ${last}"`); // First Last
+      variations.add(`"${last}, ${first}"`); // Last, First
+      variations.add(`"${first}.${last}"`); // First.Last
+      variations.add(`${first}.${last}@`); // Email pattern
+      variations.add(`${first}${last}@`); // Email pattern without dot
+      variations.add(`${first[0]}.${last}@`); // F.Last@
+      variations.add(`${first}.${last[0]}@`); // First.L@
+      
+      // Handle middle names/initials
+      if (rest.length > 1) {
+        const middle = rest[0];
+        variations.add(`"${first} ${middle} ${last}"`);
+        variations.add(`"${first}.${middle}.${last}"`);
+        variations.add(`${first}.${middle}.${last}@`);
+      }
+    }
+    
+    // Search for individual name parts too
+    nameParts.forEach(part => {
+      if (part.length > 2) {
+        variations.add(part);
+      }
+    });
+    
+    return Array.from(variations);
+  }
+
+  /**
+   * Extract contact information from email content
+   * @param {Array} emails - Array of email objects
+   * @param {string} personName - The person we're looking for
+   * @returns {Object} - Extracted contact information
+   */
+  extractContactInfoFromEmails(emails, personName) {
+    const extractedEmails = new Set();
+    const extractedPhones = new Set();
+    const extractedTitles = new Set();
+    const extractedCompanies = new Set();
+    
+    for (const email of emails) {
+      // Combine all text content
+      const allContent = `${email.from} ${email.subject} ${email.snippet || ''} ${email.body || ''}`;
+      
+      // Extract email addresses - more comprehensive regex
+      const emailMatches = allContent.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g);
+      if (emailMatches) {
+        emailMatches.forEach(e => {
+          // Only add if it looks like a real email (not a placeholder)
+          if (!e.includes('{{') && !e.includes('}}') && !e.includes('found_email') && !e.includes('placeholder')) {
+            extractedEmails.add(e.toLowerCase());
+          }
+        });
+      }
+      
+      // Extract from email headers (From field)
+      if (email.from) {
+        const fromEmailMatch = email.from.match(/<([^>]+)>/);
+        if (fromEmailMatch) {
+          const fromEmail = fromEmailMatch[1];
+          if (!fromEmail.includes('{{') && !fromEmail.includes('}}')) {
+            extractedEmails.add(fromEmail.toLowerCase());
+          }
+        } else {
+          // Simple email format
+          const simpleEmailMatch = email.from.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
+          if (simpleEmailMatch) {
+            extractedEmails.add(simpleEmailMatch[0].toLowerCase());
+          }
+        }
+      }
+      
+      // Extract phone numbers
+      const phoneMatches = allContent.match(/(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}/g);
+      if (phoneMatches) {
+        phoneMatches.forEach(p => extractedPhones.add(p.trim()));
+      }
+      
+      // Extract job titles
+      const titleMatches = allContent.match(/\b(CEO|CTO|CFO|VP|Vice President|Director|Manager|Senior|Lead|Head of|President|Founder|Engineer|Developer|Analyst|Consultant|Specialist|Coordinator|Executive)\b[^.]*?(?=\n|$|,|\.|;)/gi);
+      if (titleMatches) {
+        titleMatches.forEach(t => extractedTitles.add(t.trim()));
+      }
+      
+      // Extract company domains and names
+      const domainMatches = allContent.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g);
+      if (domainMatches) {
+        domainMatches.forEach(d => {
+          const domain = d.substring(1).toLowerCase();
+          if (!['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'aol.com', 'icloud.com'].includes(domain)) {
+            extractedCompanies.add(domain);
+          }
+        });
+      }
+    }
+    
+    return {
+      emails: extractedEmails,
+      phones: extractedPhones,
+      titles: extractedTitles,
+      companies: extractedCompanies
+    };
   }
 
   async triageEmail(email, triageLogic) {
@@ -827,21 +1171,138 @@ Focus on finding duplicates, inconsistencies, and data quality issues specific t
   }
 
   async performWebSearch(query) {
-    // This method would be called from the browser environment
-    // We'll emit an event that the frontend can listen to and perform the search
-    
     try {
-      // Emit a search request event
-      this.emitLLMEvent('search_request', { query });
+      console.log(`🌐 Performing web search: ${query}`);
       
-      // In a real implementation, this would wait for the search results
-      // For now, we'll return a placeholder that indicates search is happening
-      return `Searching for recent information about this company...`;
+      // Use OpenAI's function calling with web search capabilities
+      const searchPrompt = `Search the web for: ${query}
+
+Please provide comprehensive search results including:
+1. LinkedIn profile URLs (linkedin.com/in/...)
+2. Professional information and job titles
+3. Company information and affiliations
+4. Any relevant professional details
+
+Focus on finding accurate, up-to-date information from reliable sources.`;
+
+      const payload = {
+        model: this.model,
+        messages: [
+          { 
+            role: "system", 
+            content: "You are a web search assistant. Use your web search capabilities to find comprehensive, accurate information. Return structured results with URLs, titles, and relevant snippets." 
+          },
+          { role: "user", content: searchPrompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 1500,
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "web_search",
+              description: "Search the web for current information",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: {
+                    type: "string",
+                    description: "The search query to execute"
+                  }
+                },
+                required: ["query"]
+              }
+            }
+          }
+        ],
+        tool_choice: "auto"
+      };
+
+      const response = await this._request(payload);
+      
+      // Check if the model used tools
+      if (response.choices[0].message.tool_calls) {
+        console.log('🔧 OpenAI used web search tools');
+        // The response will contain the search results
+        return this._parseWebSearchResults(response.choices[0].message.content);
+      } else {
+        // Fallback to content-based response
+        const content = response.choices[0].message.content;
+        console.log('📄 OpenAI provided direct search response');
+        return this._parseWebSearchResults(content);
+      }
+      
     } catch (error) {
       console.warn('Web search failed:', error.message);
-      return `Unable to search for company information at this time.`;
+      
+      // No fallback - only real search is supported
+      
+      return `Unable to search for information at this time: ${error.message}`;
     }
   }
+
+  /**
+   * Parse web search results into a structured format
+   */
+  _parseWebSearchResults(content) {
+    try {
+      // Try to extract structured information from the response
+      const results = [];
+      
+      // Look for LinkedIn URLs in the content
+      const linkedinUrls = content.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+/gi) || [];
+      
+      // Extract other structured information
+      const lines = content.split('\n').filter(line => line.trim());
+      
+      let currentResult = null;
+      for (const line of lines) {
+        if (line.includes('http')) {
+          if (currentResult) {
+            results.push(currentResult);
+          }
+          currentResult = {
+            url: line.match(/https?:\/\/[^\s]+/)?.[0] || '',
+            title: '',
+            snippet: ''
+          };
+        } else if (currentResult && line.trim()) {
+          if (!currentResult.title) {
+            currentResult.title = line.trim();
+          } else {
+            currentResult.snippet += line.trim() + ' ';
+          }
+        }
+      }
+      
+      if (currentResult) {
+        results.push(currentResult);
+      }
+      
+      // If we found LinkedIn URLs but no structured results, create results from URLs
+      if (linkedinUrls.length > 0 && results.length === 0) {
+        linkedinUrls.forEach(url => {
+          results.push({
+            url: url,
+            title: `LinkedIn Profile - ${url.split('/').pop()}`,
+            snippet: 'LinkedIn professional profile'
+          });
+        });
+      }
+      
+      return results.length > 0 ? results : [{ 
+        url: '', 
+        title: 'Search completed', 
+        snippet: content.substring(0, 200) + '...' 
+      }];
+      
+    } catch (error) {
+      console.warn('Failed to parse search results:', error);
+      return [{ url: '', title: 'Search Error', snippet: content }];
+    }
+  }
+
+
 }
 
 const openAIService = new OpenAIService();

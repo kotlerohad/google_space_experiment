@@ -742,6 +742,25 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       );
     }
     
+    // Handle clickable company names in companies table
+    if (column.key === 'name' && tableName === 'companies' && column.clickable && value) {
+      return (
+        <button
+          onClick={() => {
+            // Navigate to contacts tab and filter by this company
+            const event = new CustomEvent('navigate-to-company-contacts', { 
+              detail: { companyName: value } 
+            });
+            window.dispatchEvent(event);
+          }}
+          className="text-left text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors font-medium"
+          title={`Click to view contacts for ${value}`}
+        >
+          {value}
+        </button>
+      );
+    }
+    
     // Handle contact name in activities
     if (column.key === 'contact_name' && value) {
       return (
@@ -777,6 +796,20 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
           </button>
         );
       }
+    }
+    
+    // Handle comments field
+    if (column.key === 'comments') {
+      if (!value) {
+        return <span className="text-gray-400 italic">—</span>;
+      }
+      return (
+        <div className="max-w-xs">
+          <div className="text-sm text-gray-700 truncate" title={value}>
+            {value.length > 60 ? `${value.substring(0, 60)}...` : value}
+          </div>
+        </div>
+      );
     }
     
     // Handle long text (summary, etc.)
@@ -1322,7 +1355,7 @@ const TABLE_CONFIG = {
     description: 'Manage your company database',
     columns: [
       { key: 'id', label: 'ID', width: 'w-16' },
-      { key: 'name', label: 'Company Name', width: 'w-48' },
+      { key: 'name', label: 'Company Name', width: 'w-48', clickable: true },
       { key: 'company_type_id', label: 'Type', width: 'w-32' },
       { key: 'contacts', label: 'Contacts', width: 'w-48' },
       { key: 'country', label: 'Country', width: 'w-24' },
@@ -1330,6 +1363,7 @@ const TABLE_CONFIG = {
       { key: 'priority', label: 'Priority', width: 'w-24' },
       { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
       { key: 'status', label: 'Status', width: 'w-24' },
+      { key: 'comments', label: 'Comments', width: 'w-64' },
       { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
     orderBy: 'updated_at',
@@ -1351,6 +1385,7 @@ const TABLE_CONFIG = {
       { key: 'priority', label: 'Priority', width: 'w-24' },
       { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
       { key: 'contact_status', label: 'Status', width: 'w-24' },
+      { key: 'comments', label: 'Comments', width: 'w-64' },
       { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
     orderBy: 'created_at',
@@ -1763,9 +1798,25 @@ const SupabaseIntegration = ({ onMessageLog }) => {
       }, 100);
     };
 
+    const handleNavigateToCompanyContacts = (event) => {
+      const { companyName } = event.detail;
+      setCurrentView('contacts');
+      // Clear existing filters first
+      setColumnFilters({});
+      setContactSearchFilter('');
+      // Set company filter
+      setColumnFilters({ company_name: [companyName] });
+      // Scroll to top after navigation
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 100);
+    };
+
     window.addEventListener('navigate-to-contact', handleNavigateToContact);
+    window.addEventListener('navigate-to-company-contacts', handleNavigateToCompanyContacts);
     return () => {
       window.removeEventListener('navigate-to-contact', handleNavigateToContact);
+      window.removeEventListener('navigate-to-company-contacts', handleNavigateToCompanyContacts);
     };
   }, []);
 
@@ -1796,6 +1847,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             priority,
             last_chat,
             status,
+            comments,
             created_at,
             updated_at,
             contacts(id, name, email)
@@ -1817,6 +1869,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             source,
             priority,
             last_chat,
+            comments,
             created_at,
             updated_at,
             linkedin_url,
@@ -1968,6 +2021,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
   const handleViewChange = (newView) => {
     setCurrentView(newView);
     setContactSearchFilter(''); // Clear any search filters
+    setColumnFilters({}); // Clear column filters when switching tables
     setCleanupSuggestions(null); // Clear cleanup suggestions when switching tables
     setGroupByColumn(null); // Clear grouping when switching tables
     setCurrentPage(1);
@@ -2236,6 +2290,46 @@ const SupabaseIntegration = ({ onMessageLog }) => {
                   className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
                 >
                   Clear Filter
+                </button>
+              </div>
+            )}
+            {columnFilters && Object.keys(columnFilters).length > 0 && (
+              <div className="flex items-center gap-2 ml-4">
+                <span className="text-sm text-green-600">Column filters active:</span>
+                {Object.entries(columnFilters).map(([columnKey, filterValues]) => {
+                  if (!filterValues || filterValues.length === 0) return null;
+                  const column = TABLE_CONFIG[currentView].columns.find(col => col.key === columnKey);
+                  const columnLabel = column?.label || columnKey;
+                  return (
+                    <div key={columnKey} className="flex items-center gap-1">
+                      <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                        {columnLabel}: {filterValues.length} selected
+                      </span>
+                      <button
+                        onClick={() => {
+                          const newFilters = { ...columnFilters };
+                          delete newFilters[columnKey];
+                          setColumnFilters(newFilters);
+                        }}
+                        className="text-xs text-green-600 hover:text-green-800"
+                        title={`Clear ${columnLabel} filter`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                <button
+                  onClick={() => {
+                    setColumnFilters({});
+                    setCurrentPage(1);
+                    setHasNextPage(false);
+                    setTotalRecords(0);
+                    fetchData(currentView, 1);
+                  }}
+                  className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded hover:bg-green-200 transition-colors"
+                >
+                  Clear All Filters
                 </button>
               </div>
             )}

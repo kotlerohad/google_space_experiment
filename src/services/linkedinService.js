@@ -3,47 +3,51 @@ import supabaseService from './supabaseService';
 class LinkedInService {
   constructor() {
     this.baseUrl = 'https://api.linkedin.com/v2';
-    this.shortLinkService = 'https://tinyurl.com/api-create.php'; // Using TinyURL as example
+    this.openAIService = null;
   }
 
   /**
-   * Search for LinkedIn profiles based on contact information
-   * This is a simulation of LinkedIn search - in real implementation,
-   * you would use LinkedIn's People Search API or web scraping (with proper permissions)
+   * Set the OpenAI service instance for web search capabilities
+   */
+  setOpenAIService(openAIService) {
+    this.openAIService = openAIService;
+  }
+
+  /**
+   * Search for LinkedIn profiles using OpenAI web search
+   * Only returns real LinkedIn profiles found through web search
    */
   async searchLinkedInProfile(contact) {
     try {
-      console.log(`🔍 Searching LinkedIn for: ${contact.name} (${contact.email})`);
-      
-      // For now, we'll create a simulated LinkedIn URL based on the contact's name
-      // In a real implementation, you would:
-      // 1. Use LinkedIn's People Search API
-      // 2. Use web scraping with proper permissions
-      // 3. Use third-party services like Apollo, ZoomInfo, etc.
+      if (!this.openAIService) {
+        console.warn('⚠️ OpenAI service not available for LinkedIn search');
+        return {
+          originalUrl: null,
+          found: false,
+          error: 'OpenAI service not configured'
+        };
+      }
+
+      console.log(`🔍 [REAL] Searching LinkedIn for: ${contact.name} (${contact.email || 'no email'})`);
       
       const searchQuery = this._buildSearchQuery(contact);
-      const linkedinUrl = await this._simulateLinkedInSearch(searchQuery, contact);
+      const linkedinUrl = await this._realLinkedInSearch(searchQuery, contact);
       
       if (linkedinUrl) {
-        // Shorten the LinkedIn URL
-        const shortUrl = await this._shortenUrl(linkedinUrl);
         return {
           originalUrl: linkedinUrl,
-          shortUrl: shortUrl || linkedinUrl,
           found: true
         };
       }
       
       return {
         originalUrl: null,
-        shortUrl: null,
         found: false
       };
     } catch (error) {
       console.error('Error searching LinkedIn profile:', error);
       return {
         originalUrl: null,
-        shortUrl: null,
         found: false,
         error: error.message
       };
@@ -72,56 +76,114 @@ class LinkedInService {
   }
 
   /**
-   * Simulate LinkedIn search (replace with real implementation)
+   * Real LinkedIn search using OpenAI web search capabilities
    */
-  async _simulateLinkedInSearch(searchQuery, contact) {
-    // This is a simulation - in reality, you'd implement actual search
-    if (!contact.name || contact.name.trim().length < 2) {
-      return null;
-    }
-    
-    // Create a realistic LinkedIn URL based on the contact's name
-    const firstName = contact.name.split(' ')[0]?.toLowerCase() || '';
-    const lastName = contact.name.split(' ').slice(1).join('-').toLowerCase() || '';
-    
-    if (firstName && lastName) {
-      // Generate different URL patterns
-      const patterns = [
-        `https://www.linkedin.com/in/${firstName}-${lastName}`,
-        `https://www.linkedin.com/in/${firstName}${lastName}`,
-        `https://www.linkedin.com/in/${firstName}-${lastName}-${Math.random().toString(36).substr(2, 5)}`,
-      ];
-      
-      // Randomly select a pattern (in real implementation, you'd actually search)
-      const selectedPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      
-      // Simulate some contacts not being found
-      if (Math.random() < 0.2) { // 20% chance of not finding
+  async _realLinkedInSearch(searchQuery, contact) {
+    try {
+      // Skip contacts with incomplete information
+      if (!contact.name || contact.name.trim().length < 3) {
+        console.log(`⚠️ Skipping contact with incomplete name: "${contact.name}"`);
         return null;
       }
+
+      // Build comprehensive search query
+      const searchTerms = [];
+      searchTerms.push(`"${contact.name}"`);
+      searchTerms.push('site:linkedin.com/in');
       
-      return selectedPattern;
+      if (contact.company_name && contact.company_name !== 'No Company') {
+        searchTerms.push(`"${contact.company_name}"`);
+      }
+      
+      if (contact.title && contact.title.length > 2) {
+        searchTerms.push(`"${contact.title}"`);
+      }
+
+      const fullSearchQuery = searchTerms.join(' ');
+      console.log(`🌐 Real search query: ${fullSearchQuery}`);
+
+      // Use OpenAI's web search to find LinkedIn profile
+      const searchResults = await this.openAIService.performWebSearch(fullSearchQuery);
+      
+      if (!searchResults || searchResults.length === 0) {
+        console.log(`❌ No web search results for: ${contact.name}`);
+        return null;
+      }
+
+      // Use OpenAI to analyze search results and extract LinkedIn profile
+      const linkedinUrl = await this._extractLinkedInFromResults(searchResults, contact);
+      
+      if (linkedinUrl) {
+        console.log(`✅ Real LinkedIn profile found for: ${contact.name} -> ${linkedinUrl}`);
+        return linkedinUrl;
+      } else {
+        console.log(`❌ No LinkedIn profile found in search results for: ${contact.name}`);
+        return null;
+      }
+
+    } catch (error) {
+      console.error(`❌ Real LinkedIn search failed for ${contact.name}:`, error);
+      return null;
     }
-    
-    return null;
   }
 
   /**
-   * Shorten LinkedIn URL using a URL shortening service
+   * Use OpenAI to analyze search results and extract the best LinkedIn profile URL
    */
-  async _shortenUrl(longUrl) {
+  async _extractLinkedInFromResults(searchResults, contact) {
     try {
-      // Using TinyURL as an example - you can replace with your preferred service
-      const response = await fetch(`${this.shortLinkService}?url=${encodeURIComponent(longUrl)}`);
+      const prompt = `You are a LinkedIn profile extraction expert. Analyze the following web search results and find the most relevant LinkedIn profile URL for the contact.
+
+CONTACT INFORMATION:
+- Name: ${contact.name}
+- Company: ${contact.company_name || 'Unknown'}
+- Title: ${contact.title || 'Unknown'}
+- Email: ${contact.email || 'Unknown'}
+
+SEARCH RESULTS:
+${searchResults.map((result, index) => `
+${index + 1}. Title: ${result.title}
+   URL: ${result.url}
+   Snippet: ${result.snippet}
+`).join('\n')}
+
+INSTRUCTIONS:
+1. Look for LinkedIn profile URLs (linkedin.com/in/...) in the search results
+2. Match the profile to the contact based on name, company, and title
+3. Return ONLY the most relevant LinkedIn profile URL
+4. If no good match is found, return "NOT_FOUND"
+5. Ensure the URL is a valid LinkedIn profile URL (not company page or other LinkedIn content)
+6. NEVER return fake, simulated, or empty URLs
+
+RESPONSE FORMAT:
+Return only the LinkedIn profile URL or "NOT_FOUND"`;
+
+      const response = await this.openAIService._request({
+        model: this.openAIService.model,
+        messages: [
+          { role: "system", content: "You are a LinkedIn profile extraction expert. Return only the requested LinkedIn URL or 'NOT_FOUND'. Never return fake or simulated URLs." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 200
+      });
+
+      const result = response.choices[0].message.content.trim();
       
-      if (response.ok) {
-        const shortUrl = await response.text();
-        return shortUrl;
+      if (result === 'NOT_FOUND' || !result.includes('linkedin.com/in/')) {
+        return null;
       }
-      
+
+      // Extract and validate the LinkedIn URL
+      const urlMatch = result.match(/(https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+)/i);
+      if (urlMatch) {
+        return urlMatch[1];
+      }
+
       return null;
+
     } catch (error) {
-      console.warn('Failed to shorten URL:', error);
+      console.error('Error extracting LinkedIn URL from results:', error);
       return null;
     }
   }
@@ -131,12 +193,19 @@ class LinkedInService {
    */
   async updateContactLinkedIn(contactId, linkedinData, connectionStatus = 'unknown') {
     try {
+      // Only update if we have a real LinkedIn URL
+      if (!linkedinData.originalUrl || !linkedinData.found) {
+        console.log(`⚠️ Skipping update for contact ${contactId} - no valid LinkedIn URL found`);
+        return null;
+      }
+
       const updates = {
-        linkedin_url: linkedinData.shortUrl || linkedinData.originalUrl,
+        linkedin: linkedinData.originalUrl,
         linkedin_connection_status: connectionStatus
       };
 
       const result = await supabaseService.update('contacts', contactId, updates);
+      console.log(`✅ Updated contact ${contactId} with LinkedIn: ${linkedinData.originalUrl}`);
       return result;
     } catch (error) {
       console.error('Failed to update contact LinkedIn info:', error);
@@ -146,43 +215,65 @@ class LinkedInService {
 
   /**
    * Batch search and update LinkedIn profiles for all contacts
+   * Only finds and saves real LinkedIn profiles
    */
   async findLinkedInForAllContacts(onProgress = null) {
     try {
+      if (!this.openAIService) {
+        throw new Error('OpenAI service not configured for LinkedIn search');
+      }
+
       // Get all contacts from database
       const contacts = await supabaseService.getAll('contacts');
-      console.log(`🔍 Starting LinkedIn search for ${contacts.length} contacts`);
+      console.log(`🔍 Starting REAL LinkedIn search for ${contacts.length} contacts`);
       
       const results = {
         total: contacts.length,
         found: 0,
         updated: 0,
         errors: 0,
-        skipped: 0
+        skipped: 0,
+        skipped_incomplete: 0
       };
 
       for (let i = 0; i < contacts.length; i++) {
         const contact = contacts[i];
         
         // Skip if already has LinkedIn URL
-        if (contact.linkedin_url) {
+        if (contact.linkedin) {
           results.skipped++;
           onProgress?.({
             current: i + 1,
             total: contacts.length,
-            contact: contact.name,
+            contact: contact.name || 'Unknown',
             status: 'skipped - already has LinkedIn',
             results
           });
           continue;
         }
 
+        // Skip contacts with incomplete names
+        if (!contact.name || 
+            contact.name.trim().length < 3 ||
+            contact.name.toLowerCase().includes('tbd') ||
+            contact.name.toLowerCase().includes('name tbd')) {
+          results.skipped_incomplete++;
+          onProgress?.({
+            current: i + 1,
+            total: contacts.length,
+            contact: contact.name || 'Unknown',
+            status: 'skipped - incomplete name',
+            results
+          });
+          continue;
+        }
+
         try {
-          // Search for LinkedIn profile
+          // Search for LinkedIn profile using real search only
           const linkedinData = await this.searchLinkedInProfile(contact);
           
-          if (linkedinData.found) {
-            // Update the contact with LinkedIn info
+          if (linkedinData.found && linkedinData.originalUrl) {
+            // Update the contact with real LinkedIn info
             await this.updateContactLinkedIn(contact.id, linkedinData, 'unknown');
             results.found++;
             results.updated++;
@@ -191,7 +282,7 @@ class LinkedInService {
               current: i + 1,
               total: contacts.length,
               contact: contact.name,
-              status: `found - ${linkedinData.shortUrl}`,
+              status: `✅ found - ${linkedinData.originalUrl}`,
               results
             });
           } else {
@@ -199,13 +290,13 @@ class LinkedInService {
               current: i + 1,
               total: contacts.length,
               contact: contact.name,
-              status: 'not found',
+              status: '❌ not found',
               results
             });
           }
           
-          // Add delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Add delay to respect rate limits
+          await new Promise(resolve => setTimeout(resolve, 2000));
           
         } catch (error) {
           console.error(`Error processing ${contact.name}:`, error);
@@ -214,14 +305,14 @@ class LinkedInService {
           onProgress?.({
             current: i + 1,
             total: contacts.length,
-            contact: contact.name,
-            status: `error - ${error.message}`,
+            contact: contact.name || 'Unknown',
+            status: `❌ error - ${error.message}`,
             results
           });
         }
       }
 
-      console.log('✅ LinkedIn search completed:', results);
+      console.log('✅ Real LinkedIn search completed:', results);
       return results;
       
     } catch (error) {
@@ -253,31 +344,29 @@ class LinkedInService {
   }
 
   /**
-   * Get emoji for connection status
+   * Get emoji representation for connection status
    */
   getConnectionStatusEmoji(status) {
-    const emojiMap = {
+    const statusEmojis = {
       'connected': '✅',
-      'not_connected': '❌', 
+      'not_connected': '❌',
       'unknown': '❓',
       'sent_message_no_response': '📩'
     };
-    
-    return emojiMap[status] || '❓';
+    return statusEmojis[status] || '❓';
   }
 
   /**
-   * Get display text for connection status
+   * Get text representation for connection status
    */
   getConnectionStatusText(status) {
-    const textMap = {
+    const statusTexts = {
       'connected': 'Connected',
       'not_connected': 'Not Connected',
       'unknown': 'Unknown',
       'sent_message_no_response': 'Message Sent (No Response)'
     };
-    
-    return textMap[status] || 'Unknown';
+    return statusTexts[status] || 'Unknown';
   }
 }
 
