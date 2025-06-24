@@ -112,6 +112,60 @@ class SupabaseService {
   createCompany = (companyData) => this.create('companies', companyData);
   updateCompany = (id, updates) => this.update('companies', id, updates);
 
+  // Safe delete company with option to handle related records
+  async deleteCompanyById(companyId, options = {}) {
+    if (!this.supabase) throw new Error("Supabase client not initialized");
+    
+    const { handleRelatedRecords = 'error' } = options; // 'error', 'delete', 'unlink'
+    
+    try {
+      // First check if there are related contacts
+      const { data: relatedContacts, error: contactsError } = await this.supabase
+        .from('contacts')
+        .select('id, name')
+        .eq('company_id', companyId);
+        
+      if (contactsError) throw contactsError;
+      
+      if (relatedContacts && relatedContacts.length > 0) {
+        const contactNames = relatedContacts.map(c => c.name || `Contact #${c.id}`).join(', ');
+        
+        if (handleRelatedRecords === 'error') {
+          throw new Error(`Cannot delete company - it has ${relatedContacts.length} related contact(s): ${contactNames}. Use 'delete contacts first' or 'unlink contacts' option.`);
+        } else if (handleRelatedRecords === 'delete') {
+          // Delete related contacts first
+          for (const contact of relatedContacts) {
+            const { error: deleteContactError } = await this.supabase
+              .from('contacts')
+              .delete()
+              .eq('id', contact.id);
+            if (deleteContactError) throw deleteContactError;
+          }
+        } else if (handleRelatedRecords === 'unlink') {
+          // Set company_id to null for related contacts
+          const { error: unlinkError } = await this.supabase
+            .from('contacts')
+            .update({ company_id: null })
+            .eq('company_id', companyId);
+          if (unlinkError) throw unlinkError;
+        }
+      }
+      
+      // Now delete the company
+      const { error: deleteError } = await this.supabase
+        .from('companies')
+        .delete()
+        .eq('id', companyId);
+        
+      if (deleteError) throw deleteError;
+      
+      return true;
+    } catch (error) {
+      console.error(`Failed to delete company ${companyId}:`, error);
+      throw error;
+    }
+  }
+
   // Contacts
   getContacts = () => this.getAll('contacts');
   createContact = (contactData) => this.create('contacts', contactData);
@@ -238,7 +292,24 @@ class SupabaseService {
         }
       } catch (error) {
         console.error(`Failed to execute operation: ${JSON.stringify(op)}`, error);
+        
+        // Provide better error messages for common issues
+        if (error.code === '23503') {
+          // Foreign key constraint violation
+          if (action.toLowerCase() === 'delete') {
+            throw new Error(`Cannot delete ${table} record - it's still referenced by other records. Please delete or update the referencing records first.`);
+          } else {
+            throw new Error(`Foreign key constraint violation: ${error.message}`);
+          }
+        } else if (error.code === '23505') {
+          // Unique constraint violation
+          throw new Error(`Duplicate entry: A record with these values already exists.`);
+        } else if (error.code === '23502') {
+          // Not null constraint violation
+          throw new Error(`Missing required field: ${error.message}`);
+        } else {
         throw new Error(`Database operation failed: ${error.message}`);
+        }
       }
     }
   }

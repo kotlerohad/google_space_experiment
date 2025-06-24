@@ -26,20 +26,7 @@ export const AppProvider = ({ children }) => {
 
     try {
       // Clear any potentially problematic localStorage values that might override env vars
-      const supabaseUrlFromStorage = localStorage.getItem('supabaseUrl');
-      const supabaseKeyFromStorage = localStorage.getItem('supabaseKey');
-      
-      if (supabaseUrlFromStorage && (supabaseUrlFromStorage.includes('your_supabase_url_here') || supabaseUrlFromStorage.includes('placeholder'))) {
-        console.log('🧹 Clearing problematic supabaseUrl from localStorage');
-        localStorage.removeItem('supabaseUrl');
-      }
-      
-      if (supabaseKeyFromStorage && (supabaseKeyFromStorage.includes('your_supabase_key_here') || supabaseKeyFromStorage.includes('placeholder'))) {
-        console.log('🧹 Clearing problematic supabaseKey from localStorage');
-        localStorage.removeItem('supabaseKey');
-      }
-      
-      // Force clear any cached values that might interfere
+      console.log('🧹 Clearing any cached Supabase credentials from localStorage');
       localStorage.removeItem('supabaseUrl');
       localStorage.removeItem('supabaseKey');
       const loadedConfig = {
@@ -68,6 +55,13 @@ export const AppProvider = ({ children }) => {
         emailService.setOAuthConfig(loadedConfig.googleClientId, loadedConfig.googleClientSecret);
         emailService.loadStoredTokens();
       }
+      console.log('🔧 AppContext - Supabase config check:', {
+        hasUrl: !!loadedConfig.supabaseUrl,
+        hasKey: !!loadedConfig.supabaseKey,
+        urlValue: loadedConfig.supabaseUrl?.substring(0, 30) + '...',
+        keyValue: loadedConfig.supabaseKey ? 'Set' : 'Not set'
+      });
+
       if (loadedConfig.supabaseUrl && loadedConfig.supabaseKey) {
         // Check for placeholder values
         if (loadedConfig.supabaseUrl.includes('your_supabase_url_here') || 
@@ -75,22 +69,18 @@ export const AppProvider = ({ children }) => {
           console.error('🔧 AppContext - Supabase credentials contain placeholder values!');
           toast.error('Supabase credentials not properly configured. Please check your .env file.');
         } else {
-          console.log('🔧 AppContext - Initializing Supabase with valid credentials');
+          console.log('🔧 AppContext - Attempting to initialize Supabase...');
           try {
         supabaseService.initialize(loadedConfig.supabaseUrl, loadedConfig.supabaseKey);
             console.log('✅ Supabase service initialized successfully');
+            toast.success('✅ Supabase service initialized successfully');
           } catch (error) {
             console.error('❌ Failed to initialize Supabase service:', error);
             toast.error(`Failed to initialize Supabase: ${error.message}`);
           }
         }
       } else {
-        console.warn('🔧 AppContext - Supabase not initialized:', {
-          hasUrl: !!loadedConfig.supabaseUrl,
-          hasKey: !!loadedConfig.supabaseKey,
-          urlValue: loadedConfig.supabaseUrl,
-          keyValue: loadedConfig.supabaseKey ? 'Set' : 'Not set'
-        });
+        console.warn('🔧 AppContext - Supabase not initialized - missing credentials');
         toast.warning('Supabase credentials missing. Database features will not be available.');
       }
       

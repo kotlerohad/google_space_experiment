@@ -735,4 +735,4 @@ const TriageResult = ({ email, result, onEmailAction, onFeedback, onMessageLog, 
   );
 };
 
-export default TriageResult; 
+export default TriageResult;

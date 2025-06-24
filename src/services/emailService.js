@@ -349,8 +349,8 @@ class EmailService {
   async fetchEmails(maxResults = 20) {
     await this.ensureValidToken();
 
-    // 1. Get list of message IDs
-    const listResponse = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=-is:draft`, {
+    // 1. Get list of message IDs - only fetch emails in INBOX (excludes archived emails)
+    const listResponse = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=in:inbox -is:draft`, {
       headers: { 'Authorization': `Bearer ${this.accessToken}` }
     });
     if (!listResponse.ok) throw new Error('Failed to fetch email list.');

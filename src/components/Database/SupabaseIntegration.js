@@ -1,13 +1,306 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
-import { RefreshCw, Building2, Users, Activity, FileText } from 'lucide-react';
+import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X } from 'lucide-react';
 import { CleanupIcon } from '../shared/Icons';
 import AICommandInput from './AICommandInput';
 import CleanupSuggestions from './CleanupSuggestions';
+import LastChatDatePicker from './LastChatDatePicker';
+import { emailAnalysisService } from '../../services/emailAnalysisService';
 
+// Column Filters Component
+const ColumnFilters = ({ columns, filters, onFiltersChange, onClear }) => {
+  const handleFilterChange = (columnKey, value) => {
+    const newFilters = { ...filters };
+    if (value.trim() === '') {
+      delete newFilters[columnKey];
+    } else {
+      newFilters[columnKey] = value;
+    }
+    onFiltersChange(newFilters);
+  };
 
-const DataTable = ({ records, columns, isLoading, tableName }) => {
+  const getFilterType = (column) => {
+    if (column.key.includes('_at') || column.key === 'timestamp') return 'date';
+    if (column.key === 'priority' || column.key === 'confidence') return 'number';
+    if (column.key === 'company_type_id') return 'select';
+    return 'text';
+  };
+
+  const getSelectOptions = (column) => {
+    if (column.key === 'company_type_id') {
+      return [
+        { value: '1', label: 'Other' },
+        { value: '2', label: 'Customer (Bank)' },
+        { value: '3', label: 'Channel Partner' },
+        { value: '4', label: 'Customer (NeoBank)' },
+        { value: '5', label: 'Investor' },
+        { value: '6', label: 'Customer (Software provider)' },
+        { value: '7', label: 'Customer (Payments)' }
+      ];
+    }
+    return [];
+  };
+
+  return (
+    <div className="bg-gray-50 border-t border-gray-200 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-gray-700 flex items-center gap-2">
+          <Filter className="w-4 h-4" />
+          Column Filters
+        </h4>
+        <button
+          onClick={onClear}
+          className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+        >
+          <X className="w-3 h-3" />
+          Clear All
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {columns.map(column => {
+          const filterType = getFilterType(column);
+          const value = filters[column.key] || '';
+          
+          return (
+            <div key={column.key} className="space-y-1">
+              <label className="text-xs font-medium text-gray-600">{column.label}</label>
+              {filterType === 'select' ? (
+                <select
+                  value={value}
+                  onChange={(e) => handleFilterChange(column.key, e.target.value)}
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">All</option>
+                  {getSelectOptions(column).map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={filterType}
+                  value={value}
+                  onChange={(e) => handleFilterChange(column.key, e.target.value)}
+                  placeholder={`Filter ${column.label.toLowerCase()}...`}
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNextPage, totalRecords, onLoadMore, onMessageLog, onUpdate, groupByColumn, columnFilters, onFiltersChange, showFilters, onToggleFilters }) => {
+  const [sortColumn, setSortColumn] = useState(null);
+  const [sortDirection, setSortDirection] = useState('asc');
+  const [draggedColumn, setDraggedColumn] = useState(null);
+  const [columnOrder, setColumnOrder] = useState([]);
+
+  // Load saved column order on component mount
+  useEffect(() => {
+    const savedOrder = localStorage.getItem(`columnOrder_${tableName}`);
+    if (savedOrder) {
+      try {
+        const parsedOrder = JSON.parse(savedOrder);
+        // Validate that all columns are present and no extra columns exist
+        const columnKeys = columns.map(col => col.key);
+        const isValidOrder = parsedOrder.length === columnKeys.length && 
+                           parsedOrder.every(key => columnKeys.includes(key));
+        
+        if (isValidOrder) {
+          setColumnOrder(parsedOrder);
+        } else {
+          // Reset to default order if saved order is invalid
+          setColumnOrder(columnKeys);
+        }
+      } catch (error) {
+        console.warn('Failed to parse saved column order:', error);
+        setColumnOrder(columns.map(col => col.key));
+      }
+    } else {
+      setColumnOrder(columns.map(col => col.key));
+    }
+  }, [columns, tableName]);
+
+  // Save column order to localStorage
+  const saveColumnOrder = (newOrder) => {
+    try {
+      localStorage.setItem(`columnOrder_${tableName}`, JSON.stringify(newOrder));
+    } catch (error) {
+      console.warn('Failed to save column order:', error);
+    }
+  };
+
+  // Get ordered columns based on saved preference
+  const getOrderedColumns = () => {
+    if (columnOrder.length === 0) return columns;
+    
+    const orderedColumns = [];
+    const columnMap = new Map(columns.map(col => [col.key, col]));
+    
+    // Add columns in saved order
+    columnOrder.forEach(key => {
+      const column = columnMap.get(key);
+      if (column) {
+        orderedColumns.push(column);
+        columnMap.delete(key);
+      }
+    });
+    
+    // Add any remaining columns (in case new columns were added)
+    columnMap.forEach(column => {
+      orderedColumns.push(column);
+    });
+    
+    return orderedColumns;
+  };
+
+  // Handle drag start
+  const handleDragStart = (e, columnKey) => {
+    setDraggedColumn(columnKey);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', e.target.outerHTML);
+    e.target.style.opacity = '0.5';
+  };
+
+  // Handle drag end
+  const handleDragEnd = (e) => {
+    e.target.style.opacity = '1';
+    setDraggedColumn(null);
+  };
+
+  // Handle drag over
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  // Handle drop
+  const handleDrop = (e, targetColumnKey) => {
+    e.preventDefault();
+    
+    if (!draggedColumn || draggedColumn === targetColumnKey) {
+      return;
+    }
+
+    const newOrder = [...columnOrder];
+    const draggedIndex = newOrder.indexOf(draggedColumn);
+    const targetIndex = newOrder.indexOf(targetColumnKey);
+
+    // Remove dragged column and insert at target position
+    newOrder.splice(draggedIndex, 1);
+    newOrder.splice(targetIndex, 0, draggedColumn);
+
+    setColumnOrder(newOrder);
+    saveColumnOrder(newOrder);
+    setDraggedColumn(null);
+  };
+
+  const handleSort = (columnKey) => {
+    if (sortColumn === columnKey) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(columnKey);
+      setSortDirection('asc');
+    }
+  };
+
+  // Apply filters first, then sort
+  const filteredAndSortedRecords = React.useMemo(() => {
+    let filtered = records;
+
+    // Apply column filters
+    if (columnFilters && Object.keys(columnFilters).length > 0) {
+      filtered = records.filter(record => {
+        return Object.entries(columnFilters).every(([columnKey, filterValue]) => {
+          if (!filterValue) return true;
+          
+          const recordValue = record[columnKey];
+          if (recordValue === null || recordValue === undefined) return false;
+          
+          // Handle different filter types
+          if (columnKey.includes('_at') || columnKey === 'timestamp') {
+            // Date filtering - check if the record date includes the filter date
+            const recordDate = new Date(recordValue);
+            const filterDate = new Date(filterValue);
+            return recordDate.toDateString() === filterDate.toDateString();
+          } else if (columnKey === 'priority' || columnKey === 'confidence') {
+            // Number filtering - exact match
+            return recordValue.toString() === filterValue.toString();
+          } else if (columnKey === 'company_type_id') {
+            // Select filtering - exact match
+            return recordValue.toString() === filterValue.toString();
+          } else {
+            // Text filtering - case insensitive contains
+            return recordValue.toString().toLowerCase().includes(filterValue.toLowerCase());
+          }
+        });
+      });
+    }
+
+    // Apply sorting
+    if (!sortColumn) return filtered;
+
+    return [...filtered].sort((a, b) => {
+      let aValue = a[sortColumn];
+      let bValue = b[sortColumn];
+
+      // Handle null/undefined values
+      if (aValue === null || aValue === undefined) aValue = '';
+      if (bValue === null || bValue === undefined) bValue = '';
+
+      // Handle numbers
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+
+      // Handle dates
+      if (sortColumn.includes('_at') || sortColumn === 'timestamp') {
+        const aDate = new Date(aValue);
+        const bDate = new Date(bValue);
+        return sortDirection === 'asc' ? aDate - bDate : bDate - aDate;
+      }
+
+      // Handle strings
+      const aStr = aValue.toString().toLowerCase();
+      const bStr = bValue.toString().toLowerCase();
+      
+      if (sortDirection === 'asc') {
+        return aStr.localeCompare(bStr);
+      } else {
+        return bStr.localeCompare(aStr);
+      }
+    });
+  }, [records, sortColumn, sortDirection, columnFilters]);
+
+  // Note: groupedData is computed but not used in current implementation
+  // Keeping for potential future grouped table display functionality
+  // const groupedData = React.useMemo(() => {
+  //   if (!groupByColumn) return null;
+
+  //   const groups = {};
+  //   sortedRecords.forEach(record => {
+  //     const groupValue = record[groupByColumn] || 'No Value';
+  //     if (!groups[groupValue]) {
+  //       groups[groupValue] = [];
+  //     }
+  //     groups[groupValue].push(record);
+  //   });
+
+  //   // Sort groups by key
+  //   const sortedGroups = Object.keys(groups).sort().reduce((acc, key) => {
+  //     acc[key] = groups[key];
+  //     return acc;
+  //   }, {});
+
+  //   return sortedGroups;
+  // }, [sortedRecords, groupByColumn]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -112,18 +405,60 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
       );
     }
     
-    // Handle company type ID with lookup
-    if (column.key === 'company_type_id' && value) {
-      const typeNames = {
+    // Handle company type ID with dropdown
+    if (column.key === 'company_type_id' && value && tableName === 'companies') {
+      const companyTypes = {
         1: 'Other',
-        2: 'Direct Bank Customer', 
-        3: 'ISV Partner',
-        4: 'Fintech'
+        2: 'Customer (Bank)',
+        3: 'Channel Partner',
+        4: 'Customer (NeoBank)',
+        5: 'Investor',
+        6: 'Customer (Software provider)',
+        7: 'Customer (Payments)'
       };
+      const getTypeColor = (typeId) => {
+        const colors = {
+          1: 'bg-gray-100 text-gray-800',
+          2: 'bg-blue-100 text-blue-800',
+          3: 'bg-green-100 text-green-800',
+          4: 'bg-purple-100 text-purple-800',
+          5: 'bg-orange-100 text-orange-800',
+          6: 'bg-teal-100 text-teal-800',
+          7: 'bg-pink-100 text-pink-800'
+        };
+        return colors[typeId] || 'bg-gray-100 text-gray-800';
+      };
+      
+      // In grouped view, don't show dropdown for the grouping column
+      if (groupByColumn === 'company_type_id') {
+        return (
+          <span className={`px-2 py-1 rounded text-xs ${getTypeColor(value)}`}>
+            {companyTypes[value] || `Type #${value}`}
+          </span>
+        );
+      }
+      
       return (
-        <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
-          {typeNames[value] || `Type #${value}`}
-        </span>
+        <CompanyTypeDropdown
+          currentTypeId={value}
+          companyId={record.id}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
+    }
+
+    // Handle contacts column
+    if (column.key === 'contacts' && value) {
+      if (value === 'No contacts') {
+        return <span className="text-gray-400 italic">{value}</span>;
+      }
+      return (
+        <div className="max-w-xs">
+          <div className="text-sm text-gray-700" title={value}>
+            {value.length > 50 ? `${value.substring(0, 50)}...` : value}
+          </div>
+        </div>
       );
     }
     
@@ -188,26 +523,84 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
       return <pre className="text-xs bg-gray-100 p-1 rounded max-w-xs overflow-hidden">{JSON.stringify(value, null, 2)}</pre>;
     }
     
-    // Handle priority fields
+    // Handle priority fields with dropdown for companies
     if (column.key === 'priority') {
+      if (tableName === 'companies') {
+        // In grouped view, don't show dropdown for the grouping column
+        if (groupByColumn === 'priority') {
+          if (value === null || value === undefined) {
+            return <span className="text-gray-400 italic">—</span>;
+          }
+          const priorityColors = {
+            1: 'bg-red-100 text-red-800',    // High
+            2: 'bg-yellow-100 text-yellow-800', // Medium
+            3: 'bg-green-100 text-green-800'    // Low
+          };
+          const priorityLabels = {
+            1: 'High',
+            2: 'Medium', 
+            3: 'Low'
+          };
+          const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+          const label = priorityLabels[value] || value;
+          return (
+            <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+              {label}
+            </span>
+          );
+        }
+        
+        return (
+          <PriorityDropdown
+            currentPriority={value}
+            companyId={record.id}
+            companyTypeId={record.company_type_id}
+            country={record.country}
+            onUpdate={onUpdate}
+            onMessageLog={onMessageLog}
+          />
+        );
+      } else {
+        // For other tables, show static priority
+        if (value === null || value === undefined) {
+          return <span className="text-gray-400 italic">—</span>;
+        }
+        const priorityColors = {
+          1: 'bg-red-100 text-red-800',    // High
+          2: 'bg-yellow-100 text-yellow-800', // Medium
+          3: 'bg-green-100 text-green-800'    // Low
+        };
+        const priorityLabels = {
+          1: 'High',
+          2: 'Medium', 
+          3: 'Low'
+        };
+        const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+        const label = priorityLabels[value] || value;
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+            {label}
+          </span>
+        );
+      }
+    }
+
+    // Handle source fields
+    if (column.key === 'source') {
       if (value === null || value === undefined) {
         return <span className="text-gray-400 italic">—</span>;
       }
-      const priorityColors = {
-        1: 'bg-red-100 text-red-800',
-        2: 'bg-yellow-100 text-yellow-800',
-        3: 'bg-green-100 text-green-800',
+      const sourceColors = {
+        'Email': 'bg-blue-100 text-blue-800',
+        'Manual': 'bg-gray-100 text-gray-800',
+        'Import': 'bg-yellow-100 text-yellow-800',
+        'API': 'bg-green-100 text-green-800',
+        'Web': 'bg-purple-100 text-purple-800'
       };
-      const priorityLabels = {
-        1: 'High',
-        2: 'Medium', 
-        3: 'Low'
-      };
-      const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
-      const label = priorityLabels[value] || `Priority ${value}`;
+      const colorClass = sourceColors[value] || 'bg-gray-100 text-gray-800';
       return (
         <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-          {label}
+          {value}
         </span>
       );
     }
@@ -232,29 +625,298 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
         return value;
       }
     }
+
+    // Handle last_chat dates
+    if (column.key === 'last_chat') {
+      if (tableName === 'contacts') {
+        // For contacts, show interactive date picker
+        return (
+          <LastChatDatePicker
+            currentDate={value}
+            contactId={record.id}
+            onUpdate={onUpdate}
+            onMessageLog={onMessageLog}
+          />
+        );
+      } else {
+        // For companies, show static date display
+        if (value === null || value === undefined) {
+          return <span className="text-gray-400 italic">—</span>;
+        }
+        try {
+          const date = new Date(value);
+          const now = new Date();
+          const daysDiff = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+          
+          let colorClass = 'text-gray-600';
+          if (daysDiff <= 7) colorClass = 'text-green-600'; // Recent
+          else if (daysDiff <= 30) colorClass = 'text-yellow-600'; // Within month
+          else colorClass = 'text-red-600'; // Old
+          
+          return (
+            <span className={`text-sm ${colorClass}`}>
+              {date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+              })}
+            </span>
+          );
+        } catch {
+          return value;
+        }
+      }
+    }
     
     return <span className="text-gray-900">{value.toString()}</span>;
   };
 
+  // Get sorted records
+  const getSortedRecords = (recordsToSort) => {
+    if (!sortColumn) return recordsToSort;
+
+    return [...recordsToSort].sort((a, b) => {
+      let aVal = a[sortColumn];
+      let bVal = b[sortColumn];
+
+      // Handle null/undefined values
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return sortDirection === 'asc' ? 1 : -1;
+      if (bVal == null) return sortDirection === 'asc' ? -1 : 1;
+
+      // Handle different data types
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  // Group records if groupByColumn is specified
+  const getGroupedRecords = () => {
+    if (!groupByColumn) {
+      return null; // Return null when not grouping to use regular table
+    }
+
+    const groups = {};
+    records.forEach(record => {
+      let groupValue = record[groupByColumn] || 'Other';
+      
+      // Convert company type IDs to names for better display
+      if (groupByColumn === 'company_type_id' && groupValue !== 'Other') {
+        const companyTypes = {
+          1: 'Other',
+          2: 'Customer (Bank)',
+          3: 'Channel Partner',
+          4: 'Customer (NeoBank)',
+          5: 'Investor',
+          6: 'Customer (Software provider)',
+          7: 'Customer (Payments)'
+        };
+        groupValue = companyTypes[groupValue] || `Type #${groupValue}`;
+      }
+      
+      if (!groups[groupValue]) {
+        groups[groupValue] = [];
+      }
+      groups[groupValue].push(record);
+    });
+
+    // Sort records within each group
+    Object.keys(groups).forEach(groupKey => {
+      groups[groupKey] = getSortedRecords(groups[groupKey]);
+    });
+
+    return groups;
+  };
+
+  const groupedRecords = getGroupedRecords();
+  const orderedColumns = getOrderedColumns();
+
+  if (groupedRecords) {
+    // Render grouped tables
+    return (
+      <div className="space-y-6">
+        {Object.entries(groupedRecords).map(([groupValue, groupRecords]) => (
+          <div key={groupValue} className="bg-white rounded-lg border border-gray-200">
+            {/* Group Header */}
+            <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 border-b border-gray-200 rounded-t-lg">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {groupByColumn && (
+                    <span className="text-sm font-medium text-gray-600 uppercase tracking-wider mr-2">
+                      {columns.find(col => col.key === groupByColumn)?.label}:
+                    </span>
+                  )}
+                  <span className="text-blue-800">{groupValue}</span>
+                </h3>
+                <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                  {groupRecords.length} {groupRecords.length === 1 ? 'record' : 'records'}
+                </span>
+              </div>
+            </div>
+            
+            {/* Group Table */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {orderedColumns.map((col) => (
+                      <th 
+                        key={col.key}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, col.key)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, col.key)}
+                        className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                        onClick={() => handleSort(col.key)}
+                        title={`Sort by ${col.label}. Drag to reorder columns.`}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>{col.label}</span>
+                          {sortColumn === col.key && (
+                            <span className="text-blue-500">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                          {/* Drag indicator */}
+                          <div className="opacity-30 hover:opacity-60 transition-opacity ml-1">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                              <circle cx="3" cy="3" r="1"/>
+                              <circle cx="9" cy="3" r="1"/>
+                              <circle cx="3" cy="9" r="1"/>
+                              <circle cx="9" cy="9" r="1"/>
+                            </svg>
+                          </div>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {groupRecords.map((record, index) => (
+                    <tr key={record.id || index} className="hover:bg-gray-50 transition-colors">
+                      {orderedColumns.map((col) => (
+                        <td key={col.key} className={`px-4 py-3 text-sm ${col.width || ''}`}>
+                          {getDisplayValue(record, col)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+        
+        {/* Summary Footer */}
+        {records.length > 0 && (
+          <div className="bg-gray-50 px-4 py-2 text-center text-sm text-gray-600 rounded-lg border border-gray-200">
+            <div className="flex justify-center items-center space-x-4">
+              <span>
+                Total: {records.length} records in {Object.keys(groupedRecords).length} groups
+              </span>
+              {hasNextPage && (
+                <button
+                  onClick={onLoadMore}
+                  className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium"
+                >
+                  Load next 50 →
+                </button>
+              )}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Grouped by {columns.find(col => col.key === groupByColumn)?.label}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Render regular table
   return (
-    <div className="overflow-x-auto bg-white rounded-lg border border-gray-200">
-      <table className="min-w-full">
+    <div className="bg-white rounded-lg border border-gray-200">
+      {/* Filter Toggle Button */}
+      <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+        <div className="text-sm text-gray-600">
+          {Object.keys(columnFilters).length > 0 && (
+            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium mr-2">
+              {Object.keys(columnFilters).length} filter{Object.keys(columnFilters).length !== 1 ? 's' : ''} active
+            </span>
+          )}
+          Showing {filteredAndSortedRecords.length} of {records.length} records
+        </div>
+        <button
+          onClick={onToggleFilters}
+          className="flex items-center gap-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+        >
+          <Filter className="w-4 h-4" />
+          {showFilters ? 'Hide Filters' : 'Show Filters'}
+        </button>
+      </div>
+      
+      {/* Column Filters */}
+      {showFilters && (
+        <ColumnFilters
+          columns={columns}
+          filters={columnFilters}
+          onFiltersChange={onFiltersChange}
+          onClear={() => onFiltersChange({})}
+        />
+      )}
+      
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
         <thead className="bg-gray-50">
           <tr>
-            {columns.map((col) => (
+            {orderedColumns.map((col) => (
               <th 
-                key={col.key} 
-                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${col.width || ''}`}
+                key={col.key}
+                draggable
+                onDragStart={(e) => handleDragStart(e, col.key)}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, col.key)}
+                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                onClick={() => handleSort(col.key)}
+                title={`Sort by ${col.label}. Drag to reorder columns.`}
               >
-                {col.label}
+                <div className="flex items-center space-x-1">
+                  <span>{col.label}</span>
+                  {sortColumn === col.key && (
+                    <span className="text-blue-500">
+                      {sortDirection === 'asc' ? '↑' : '↓'}
+                    </span>
+                  )}
+                  {sortColumn !== col.key && (
+                    <span className="text-gray-300 opacity-0 group-hover:opacity-100">
+                      ↑↓
+                    </span>
+                  )}
+                  {/* Drag indicator */}
+                  <div className="opacity-30 hover:opacity-60 transition-opacity ml-1">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                      <circle cx="3" cy="3" r="1"/>
+                      <circle cx="9" cy="3" r="1"/>
+                      <circle cx="3" cy="9" r="1"/>
+                      <circle cx="9" cy="9" r="1"/>
+                    </svg>
+                  </div>
+                </div>
               </th>
             ))}
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {records.map((record, index) => (
+          {filteredAndSortedRecords.map((record, index) => (
             <tr key={record.id || index} className="hover:bg-gray-50 transition-colors">
-              {columns.map((col) => (
+              {orderedColumns.map((col) => (
                 <td key={col.key} className={`px-4 py-3 text-sm ${col.width || ''}`}>
                   {getDisplayValue(record, col)}
                 </td>
@@ -264,11 +926,27 @@ const DataTable = ({ records, columns, isLoading, tableName }) => {
         </tbody>
       </table>
       
-      {records.length === 50 && (
+      {records.length > 0 && (
         <div className="bg-gray-50 px-4 py-2 text-center text-sm text-gray-600">
-          Showing first 50 records. Use AI commands to filter or search for specific data.
+          <div className="flex justify-center items-center space-x-4">
+            <span>
+              Showing {((currentPage - 1) * 50) + 1}-{Math.min(currentPage * 50, totalRecords)} of {totalRecords} records
+            </span>
+            {hasNextPage && (
+              <button
+                onClick={onLoadMore}
+                className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium"
+              >
+                Load next 50 →
+              </button>
+            )}
+          </div>
+          <div className="mt-1 text-xs text-gray-500">
+            Use AI commands to filter or search for specific data
+          </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
@@ -282,13 +960,18 @@ const TABLE_CONFIG = {
     columns: [
       { key: 'id', label: 'ID', width: 'w-16' },
       { key: 'name', label: 'Company Name', width: 'w-48' },
-      { key: 'company_type_id', label: 'Type ID', width: 'w-20' },
+      { key: 'company_type_id', label: 'Type', width: 'w-32' },
+      { key: 'contacts', label: 'Contacts', width: 'w-48' },
       { key: 'country', label: 'Country', width: 'w-24' },
+      { key: 'source', label: 'Source', width: 'w-28' },
+      { key: 'priority', label: 'Priority', width: 'w-24' },
+      { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
       { key: 'status', label: 'Status', width: 'w-24' },
-      { key: 'created_at', label: 'Added', width: 'w-32' },
+      { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
-    orderBy: 'created_at',
-    orderDirection: 'desc'
+    orderBy: 'updated_at',
+    orderDirection: 'desc',
+    customQuery: true
   },
   contacts: {
     label: 'Contacts',
@@ -300,6 +983,9 @@ const TABLE_CONFIG = {
       { key: 'email', label: 'Email', width: 'w-64' },
       { key: 'title', label: 'Title', width: 'w-32' },
       { key: 'company_name', label: 'Company', width: 'w-32' },
+      { key: 'source', label: 'Source', width: 'w-28' },
+      { key: 'priority', label: 'Priority', width: 'w-24' },
+      { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
       { key: 'contact_status', label: 'Status', width: 'w-24' },
     ],
     orderBy: 'created_at',
@@ -339,6 +1025,262 @@ const TABLE_CONFIG = {
   },
 };
 
+// Company Type Dropdown Component
+const CompanyTypeDropdown = ({ currentTypeId, companyId, onUpdate, onMessageLog }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const companyTypes = {
+    1: 'Other',
+    2: 'Customer (Bank)',
+    3: 'Channel Partner',
+    4: 'Customer (NeoBank)',
+    5: 'Investor',
+    6: 'Customer (Software provider)',
+    7: 'Customer (Payments)'
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.company-type-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleTypeChange = async (newTypeId) => {
+    if (newTypeId === currentTypeId) {
+      setIsOpen(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      onMessageLog?.(`Updating company ${companyId} type to ${companyTypes[newTypeId]}...`, 'info');
+      
+      const { error } = await supabaseService.supabase
+        .from('companies')
+        .update({ company_type_id: newTypeId })
+        .eq('id', companyId);
+
+      if (error) throw error;
+
+      onMessageLog?.(`✓ Successfully updated company type to ${companyTypes[newTypeId]}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error('Failed to update company type:', error);
+      onMessageLog?.(`✗ Failed to update company type: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
+      setIsOpen(false);
+    }
+  };
+
+  const getTypeColor = (typeId) => {
+    const colors = {
+      1: 'bg-gray-100 text-gray-800',
+      2: 'bg-blue-100 text-blue-800',
+      3: 'bg-green-100 text-green-800',
+      4: 'bg-purple-100 text-purple-800',
+      5: 'bg-orange-100 text-orange-800',
+      6: 'bg-teal-100 text-teal-800',
+      7: 'bg-pink-100 text-pink-800'
+    };
+    return colors[typeId] || 'bg-gray-100 text-gray-800';
+  };
+
+  return (
+    <div className="relative company-type-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isUpdating}
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${getTypeColor(currentTypeId)} ${
+          isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
+        }`}
+        title="Click to change company type"
+      >
+        {isUpdating ? 'Updating...' : (companyTypes[currentTypeId] || `Type #${currentTypeId}`)}
+        <span className="ml-1 text-xs">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-48">
+          {Object.entries(companyTypes).map(([typeId, typeName]) => (
+            <button
+              key={typeId}
+              onClick={() => handleTypeChange(parseInt(typeId))}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                parseInt(typeId) === currentTypeId ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              }`}
+            >
+              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getTypeColor(parseInt(typeId)).replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
+              {typeName}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Priority Dropdown Component
+const PriorityDropdown = ({ currentPriority, companyId, companyTypeId, country, onUpdate, onMessageLog }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const priorities = {
+    1: 'High',
+    2: 'Medium', 
+    3: 'Low'
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.priority-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // Get suggested priority based on company type and country
+  const getSuggestedPriority = () => {
+    const companyTypes = {
+      1: 'Other',
+      2: 'Customer (Bank)',
+      3: 'Channel Partner',
+      4: 'Customer (NeoBank)',
+      5: 'Investor',
+      6: 'Customer (Software provider)',
+      7: 'Customer (Payments)'
+    };
+
+    const typeName = companyTypes[companyTypeId];
+    const isIsrael = country === 'Israel';
+
+    // Israeli banks -> Low (3)
+    if (typeName === 'Customer (Bank)' && isIsrael) return 3;
+    
+    // Channel partners -> Medium (2)
+    if (typeName === 'Channel Partner') return 2;
+    
+    // Investors -> Low (3)
+    if (typeName === 'Investor') return 3;
+    
+    // Customer (NeoBank) -> Medium (2)
+    if (typeName === 'Customer (NeoBank)') return 2;
+    
+    // Banks not in Israel -> High (1)
+    if (typeName === 'Customer (Bank)' && !isIsrael) return 1;
+    
+    // Rest -> null (empty)
+    return null;
+  };
+
+  const handlePriorityChange = async (newPriority) => {
+    if (newPriority === currentPriority) {
+      setIsOpen(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const priorityText = newPriority ? priorities[newPriority] : 'None';
+      onMessageLog?.(`Updating company ${companyId} priority to ${priorityText}...`, 'info');
+      
+      const { error } = await supabaseService.supabase
+        .from('companies')
+        .update({ priority: newPriority })
+        .eq('id', companyId);
+
+      if (error) throw error;
+
+      onMessageLog?.(`✓ Successfully updated priority to ${priorityText}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error('Failed to update priority:', error);
+      onMessageLog?.(`✗ Failed to update priority: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
+      setIsOpen(false);
+    }
+  };
+
+  const getPriorityColor = (priority) => {
+    const colors = {
+      1: 'bg-red-100 text-red-800',    // High
+      2: 'bg-yellow-100 text-yellow-800', // Medium
+      3: 'bg-green-100 text-green-800'    // Low
+    };
+    return colors[priority] || 'bg-gray-100 text-gray-800';
+  };
+
+  const suggestedPriority = getSuggestedPriority();
+  const displayPriority = currentPriority || suggestedPriority;
+  const displayText = displayPriority ? priorities[displayPriority] : null;
+
+  return (
+    <div className="relative priority-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isUpdating}
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${
+          displayPriority ? getPriorityColor(displayPriority) : 'bg-gray-50 text-gray-400 border border-dashed'
+        } ${
+          isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
+        }`}
+        title={`Click to change priority${suggestedPriority && !currentPriority ? ` (suggested: ${priorities[suggestedPriority]})` : ''}`}
+      >
+        {isUpdating ? 'Updating...' : (displayText || '—')}
+        {suggestedPriority && !currentPriority && (
+          <span className="ml-1 text-xs opacity-60">(suggested)</span>
+        )}
+        <span className="ml-1 text-xs">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-32">
+          <button
+            onClick={() => handlePriorityChange(null)}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
+              !currentPriority ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+            }`}
+          >
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
+            None
+          </button>
+          {Object.entries(priorities).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => handlePriorityChange(parseInt(key))}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
+                parseInt(key) === currentPriority ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              } ${parseInt(key) === suggestedPriority && !currentPriority ? 'bg-yellow-50 border-l-2 border-yellow-400' : ''}`}
+            >
+              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getPriorityColor(parseInt(key)).replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
+              {label}
+              {parseInt(key) === suggestedPriority && !currentPriority && (
+                <span className="ml-2 text-xs text-yellow-600">(suggested)</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SupabaseIntegration = ({ onMessageLog }) => {
   const { isConfigLoaded, openAIService } = useContext(AppContext);
   const [currentView, setCurrentView] = useState('companies');
@@ -348,6 +1290,13 @@ const SupabaseIntegration = ({ onMessageLog }) => {
   const [contactSearchFilter, setContactSearchFilter] = useState('');
   const [cleanupSuggestions, setCleanupSuggestions] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [groupByColumn, setGroupByColumn] = useState(null);
+  const [isFindingLastChat, setIsFindingLastChat] = useState(false);
+  const [columnFilters, setColumnFilters] = useState({});
+  const [showFilters, setShowFilters] = useState(false);
 
   // Handle navigation to contact
   useEffect(() => {
@@ -367,18 +1316,43 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     };
   }, []);
 
-  const fetchData = useCallback(async (tableName) => {
+  const fetchData = useCallback(async (tableName, page = 1, append = false) => {
     if (!isConfigLoaded || !supabaseService.isConnected()) return;
     setIsLoading(true);
     setError(null);
     try {
-      onMessageLog?.(`Loading ${tableName} from Supabase...`, 'info');
+      onMessageLog?.(`Loading ${tableName} from Supabase (page ${page})...`, 'info');
       
       const config = TABLE_CONFIG[tableName];
+      const limit = 50;
+      const offset = (page - 1) * limit;
+      
       let query;
+      let countQuery;
       
       // Handle special queries for tables that need JOINs
-      if (tableName === 'contacts') {
+      if (tableName === 'companies') {
+        query = supabaseService.supabase
+          .from('companies')
+          .select(`
+            id,
+            name,
+            company_type_id,
+            country,
+            source,
+            priority,
+            last_chat,
+            status,
+            created_at,
+            updated_at,
+            contacts(id, name, email)
+          `);
+        
+        // Count query for pagination
+        countQuery = supabaseService.supabase
+          .from('companies')
+          .select('id', { count: 'exact', head: true });
+      } else if (tableName === 'contacts') {
         query = supabaseService.supabase
           .from('contacts')
           .select(`
@@ -387,13 +1361,23 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             email,
             title,
             contact_status,
+            source,
+            priority,
+            last_chat,
             created_at,
             companies!inner(name)
           `);
         
+        // Count query for pagination
+        countQuery = supabaseService.supabase
+          .from('contacts')
+          .select('id', { count: 'exact', head: true });
+        
         // Apply search filter if set
         if (contactSearchFilter) {
-          query = query.or(`name.ilike.%${contactSearchFilter}%,email.ilike.%${contactSearchFilter}%`);
+          const filterCondition = `name.ilike.%${contactSearchFilter}%,email.ilike.%${contactSearchFilter}%`;
+          query = query.or(filterCondition);
+          countQuery = countQuery.or(filterCondition);
         }
       } else if (tableName === 'activities') {
         query = supabaseService.supabase
@@ -407,6 +1391,9 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             next_step_due_date,
             created_at
           `);
+        countQuery = supabaseService.supabase
+          .from('activities')
+          .select('id', { count: 'exact', head: true });
       } else if (tableName === 'triage_results') {
         query = supabaseService.supabase
           .from('triage_results')
@@ -419,8 +1406,14 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             created_at,
             contact_context
           `);
+        countQuery = supabaseService.supabase
+          .from('triage_results')
+          .select('id', { count: 'exact', head: true });
       } else {
         query = supabaseService.supabase.from(tableName).select('*');
+        countQuery = supabaseService.supabase
+          .from(tableName)
+          .select('id', { count: 'exact', head: true });
       }
       
       // Apply ordering
@@ -428,16 +1421,26 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         query = query.order(config.orderBy, { ascending: config.orderDirection === 'asc' });
       }
       
-      // Limit results for performance
-      query = query.limit(50);
+      // Apply pagination
+      query = query.range(offset, offset + limit - 1);
       
-      const { data, error } = await query;
+      // Execute both queries in parallel
+      const [{ data, error }, { count, error: countError }] = await Promise.all([
+        query,
+        countQuery
+      ]);
       
       if (error) throw error;
+      if (countError) throw countError;
       
       // Transform data for tables with JOINs to flatten related names
       let transformedData = data || [];
-      if (tableName === 'contacts') {
+      if (tableName === 'companies') {
+        transformedData = data.map(company => ({
+          ...company,
+          contacts: company.contacts?.map(c => c.name).join(', ') || 'No contacts'
+        }));
+      } else if (tableName === 'contacts') {
         transformedData = data.map(contact => ({
           ...contact,
           company_name: contact.companies?.name || 'No Company'
@@ -473,8 +1476,19 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         });
       }
       
-      setRecords(transformedData);
-      onMessageLog?.(`Loaded ${transformedData?.length || 0} records from ${tableName}`, 'success');
+      // Update pagination state
+      setCurrentPage(page);
+      setTotalRecords(count || 0);
+      setHasNextPage((count || 0) > page * limit);
+      
+      // Either append to existing records or replace them
+      if (append && page > 1) {
+        setRecords(prev => [...prev, ...transformedData]);
+      } else {
+        setRecords(transformedData);
+      }
+      
+      onMessageLog?.(`Loaded ${transformedData?.length || 0} records from ${tableName} (page ${page}, total: ${count || 0})`, 'success');
     } catch (err) {
       const errorMsg = `Failed to load ${tableName}: ${err.message}`;
       setError(errorMsg);
@@ -486,7 +1500,10 @@ const SupabaseIntegration = ({ onMessageLog }) => {
 
   useEffect(() => {
     if (isConfigLoaded) {
-      fetchData(currentView);
+      setCurrentPage(1);
+      setHasNextPage(false);
+      setTotalRecords(0);
+      fetchData(currentView, 1);
     }
   }, [currentView, fetchData, isConfigLoaded]);
   
@@ -494,12 +1511,25 @@ const SupabaseIntegration = ({ onMessageLog }) => {
     setCurrentView(newView);
     setContactSearchFilter(''); // Clear any search filters
     setCleanupSuggestions(null); // Clear cleanup suggestions when switching tables
-    fetchData(newView);
+    setGroupByColumn(null); // Clear grouping when switching tables
+    setCurrentPage(1);
+    setHasNextPage(false);
+    setTotalRecords(0);
+    fetchData(newView, 1);
   };
 
   const handleCommandExecuted = () => {
     // Refresh the current view after a command is executed
-    fetchData(currentView);
+    setCurrentPage(1);
+    setHasNextPage(false);
+    setTotalRecords(0);
+    fetchData(currentView, 1);
+  };
+
+  const handleLoadMore = () => {
+    if (hasNextPage && !isLoading) {
+      fetchData(currentView, currentPage + 1, true);
+    }
   };
 
   const handleSuggestCleanup = async () => {
@@ -576,7 +1606,10 @@ const SupabaseIntegration = ({ onMessageLog }) => {
       onMessageLog?.(`Cleanup completed successfully: ${suggestion.description}`, 'success');
       
       // Refresh the data to show the changes
-      await fetchData(currentView);
+      setCurrentPage(1);
+      setHasNextPage(false);
+      setTotalRecords(0);
+      await fetchData(currentView, 1);
       
     } catch (error) {
       console.error('Failed to execute cleanup:', error);
@@ -586,6 +1619,34 @@ const SupabaseIntegration = ({ onMessageLog }) => {
 
   const handleRejectCleanup = (index) => {
     onMessageLog?.(`Cleanup suggestion #${index + 1} rejected`, 'info');
+  };
+
+  const handleFindLastChat = async () => {
+    if (isFindingLastChat) return;
+
+    setIsFindingLastChat(true);
+    try {
+      onMessageLog?.('🔍 Starting last chat analysis for all contacts...', 'info');
+      
+      // Find last chat for all contacts
+      const contactResults = await emailAnalysisService.findLastChatForAllContacts();
+      
+      // Update companies based on contact data
+      onMessageLog?.('🏢 Updating company last chat dates...', 'info');
+      const companyResults = await emailAnalysisService.updateCompanyLastChatDates();
+      
+      // Refresh the current view
+      await fetchData(currentView, 1, false);
+      
+      const totalUpdated = contactResults.updated + companyResults.updated;
+      onMessageLog?.(`🎉 Analysis complete! Updated ${totalUpdated} records total`, 'success');
+      
+    } catch (error) {
+      console.error('Error finding last chat:', error);
+      onMessageLog?.(`❌ Failed to find last chat: ${error.message}`, 'error');
+    } finally {
+      setIsFindingLastChat(false);
+    }
   };
 
   return (
@@ -624,14 +1685,42 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             );
           })}
         </div>
-        <button
-          onClick={() => fetchData(currentView)}
-          disabled={isLoading}
-          className="bg-white border border-gray-200 text-gray-700 p-2 rounded-lg hover:bg-gray-50 disabled:bg-gray-100 flex items-center transition-colors"
-          title="Refresh data"
-        >
-          <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex items-center space-x-2">
+          {/* Group By Dropdown */}
+          <div className="relative">
+            <select
+              value={groupByColumn || ''}
+              onChange={(e) => setGroupByColumn(e.target.value || null)}
+              className="bg-white border border-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              title="Group records by column"
+            >
+              <option value="">No Grouping</option>
+              {TABLE_CONFIG[currentView].columns
+                .filter(col => ['country', 'company_type_id', 'status', 'priority', 'source', 'contact_status'].includes(col.key))
+                .map(col => (
+                  <option key={col.key} value={col.key}>
+                    Group by {col.label}
+                  </option>
+                ))
+              }
+            </select>
+          </div>
+          
+          {/* Refresh Button */}
+          <button
+            onClick={() => {
+              setCurrentPage(1);
+              setHasNextPage(false);
+              setTotalRecords(0);
+              fetchData(currentView, 1);
+            }}
+            disabled={isLoading}
+            className="bg-white border border-gray-200 text-gray-700 p-2 rounded-lg hover:bg-gray-50 disabled:bg-gray-100 flex items-center transition-colors"
+            title="Refresh data"
+          >
+            <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* Current View Description */}
@@ -646,7 +1735,10 @@ const SupabaseIntegration = ({ onMessageLog }) => {
                 <button
                   onClick={() => {
                     setContactSearchFilter('');
-                    fetchData('contacts');
+                    setCurrentPage(1);
+                    setHasNextPage(false);
+                    setTotalRecords(0);
+                    fetchData('contacts', 1);
                   }}
                   className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
                 >
@@ -656,16 +1748,31 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             )}
           </div>
           
-          {/* Suggest Cleanup Button */}
-          <button
-            onClick={handleSuggestCleanup}
-            disabled={isAnalyzing || isLoading || !records || records.length === 0}
-            className="flex items-center gap-2 bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition-colors disabled:bg-orange-300 disabled:cursor-not-allowed text-sm font-medium"
-            title="Analyze table for cleanup opportunities"
-          >
-            <CleanupIcon className={`h-4 w-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
-            {isAnalyzing ? 'Analyzing...' : 'Suggest Cleanup'}
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* Find Last Chat Button - Only for Contacts */}
+            {currentView === 'contacts' && (
+              <button
+                onClick={handleFindLastChat}
+                disabled={isFindingLastChat || isLoading || !records || records.length === 0}
+                className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-300 disabled:cursor-not-allowed text-sm font-medium"
+                title="Find last chat dates from email correspondence"
+              >
+                <Search className={`h-4 w-4 ${isFindingLastChat ? 'animate-spin' : ''}`} />
+                {isFindingLastChat ? 'Finding...' : 'Find Last Chat'}
+              </button>
+            )}
+            
+            {/* Suggest Cleanup Button */}
+            <button
+              onClick={handleSuggestCleanup}
+              disabled={isAnalyzing || isLoading || !records || records.length === 0}
+              className="flex items-center gap-2 bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition-colors disabled:bg-orange-300 disabled:cursor-not-allowed text-sm font-medium"
+              title="Analyze table for cleanup opportunities"
+            >
+              <CleanupIcon className={`h-4 w-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
+              {isAnalyzing ? 'Analyzing...' : 'Suggest Cleanup'}
+            </button>
+          </div>
         </div>
         <p className="text-sm text-gray-600 mt-1">{TABLE_CONFIG[currentView].description}</p>
       </div>
@@ -676,6 +1783,17 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         columns={TABLE_CONFIG[currentView].columns}
         isLoading={isLoading}
         tableName={currentView}
+        currentPage={currentPage}
+        hasNextPage={hasNextPage}
+        totalRecords={totalRecords}
+        onLoadMore={handleLoadMore}
+        onMessageLog={onMessageLog}
+        onUpdate={() => fetchData(currentView, 1)}
+        groupByColumn={groupByColumn}
+        columnFilters={columnFilters}
+        onFiltersChange={setColumnFilters}
+        showFilters={showFilters}
+        onToggleFilters={() => setShowFilters(!showFilters)}
       />
       
       {/* Cleanup Suggestions */}

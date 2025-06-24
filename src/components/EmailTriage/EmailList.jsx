@@ -81,13 +81,13 @@ const EmailList = ({ onMessageLog, config }) => {
   }, [onMessageLog, isConfigLoaded]);
 
   const fetchEmails = useCallback(async () => {
+    if (!isConfigLoaded) return;
+    
     setIsLoading(true);
     setError(null);
-    setEmails([]);
-    setTriageResults({}); // Clear existing triage results
+    onMessageLog?.('Fetching emails from Gmail...', 'info');
 
     try {
-      onMessageLog?.('Fetching emails from Gmail...', 'info');
       const fetchedEmails = await emailService.fetchEmails(50);
       setEmails(fetchedEmails);
       
@@ -117,7 +117,7 @@ const EmailList = ({ onMessageLog, config }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [onMessageLog, loadStoredTriageResults]);
+  }, [onMessageLog, loadStoredTriageResults, isConfigLoaded]);
 
   // OAuth status monitoring effect
   useEffect(() => {
@@ -156,7 +156,7 @@ const EmailList = ({ onMessageLog, config }) => {
       clearInterval(interval);
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, [emails.length, isLoading, error]); // Removed fetchEmails to avoid infinite loop
+  }, [emails.length, isLoading, error, fetchEmails]);
 
   const loadTriageLogic = useCallback(async () => {
     if (!isConfigLoaded) return;
@@ -184,8 +184,7 @@ const EmailList = ({ onMessageLog, config }) => {
       console.log('📧 App loaded with Gmail auth - auto-fetching emails...');
       fetchEmails();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConfigLoaded, oauthStatus.hasAccessToken, emails.length, isLoading, error]);
+  }, [isConfigLoaded, oauthStatus.hasAccessToken, emails.length, isLoading, error, fetchEmails]);
 
   // Debug effect to check OpenAI service status
   useEffect(() => {
@@ -751,7 +750,7 @@ This information would be used to craft more informed and strategic responses th
   return (
     <div className="space-y-6">
       {/* Fetch Emails Section */}
-      <div className="bg-white p-6 rounded-lg shadow-md">
+      <div className="space-y-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <MailIcon className="h-5 w-5 text-blue-600" />
@@ -797,19 +796,19 @@ This information would be used to craft more informed and strategic responses th
                 className="flex items-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 text-sm"
               >
                 <SparklesIcon className="h-4 w-4" />
-                Decide Actions
+                Triage All
               </button>
             </div>
             
             <div className="overflow-x-auto">
               <table className="w-full bg-white border border-gray-200 rounded-lg table-fixed">
                 <colgroup>
-                  <col className="w-40" />  {/* From - reduced width */}
-                  <col className="w-48" />  {/* Subject - reduced width */}
-                  <col className="w-auto" /> {/* Preview - takes remaining space */}
-                  <col className="w-20" />  {/* Date - reduced width */}
-                  <col className="w-32" />  {/* Status - reduced width */}
-                  <col className="w-40" />  {/* Actions - reduced width */}
+                  <col className="w-40" />
+                  <col className="w-48" />
+                  <col className="w-auto" />
+                  <col className="w-20" />
+                  <col className="w-32" />
+                  <col className="w-40" />
                 </colgroup>
                 <thead className="bg-gray-50">
                   <tr>
@@ -896,10 +895,14 @@ This information would be used to craft more informed and strategic responses th
                               <button
                                 onClick={() => handleTriage(email)}
                                 disabled={triageResults[email.id]?.isLoading}
-                                className="bg-purple-600 text-white font-semibold py-1 px-3 rounded hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 flex items-center gap-1 text-xs"
+                                className="bg-purple-600 text-white font-semibold py-1 px-4 min-w-[6.5rem] rounded hover:bg-purple-700 transition duration-300 disabled:bg-purple-300 flex items-center gap-1 text-xs whitespace-nowrap"
                               >
                                 <SparklesIcon className="h-3 w-3" />
-                                {triageResults[email.id]?.isLoading ? 'Deciding...' : 'Decide Action'}
+                                {triageResults[email.id]?.isLoading
+                                  ? 'Analyzing...'
+                                  : triageResults[email.id] && (triageResults[email.id].key_point || triageResults[email.id].error || triageResults[email.id].draftCreated || triageResults[email.id].autoArchived)
+                                    ? 'Re-Analyze'
+                                    : 'Triage'}
                               </button>
                               
                               <button
@@ -913,7 +916,7 @@ This information would be used to craft more informed and strategic responses th
                             
                             <button
                               onClick={() => toggleEmailCollapse(email.id)}
-                              className="p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-300 rounded border border-gray-300 bg-white shadow-sm"
+                              className="ml-2 p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-300 rounded border border-gray-300 bg-white shadow-sm"
                               aria-label={collapsedEmails.has(email.id) ? "Expand email" : "Collapse email"}
                               title={collapsedEmails.has(email.id) ? "Expand email" : "Collapse email"}
                             >
