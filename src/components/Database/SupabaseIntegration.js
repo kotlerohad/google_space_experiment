@@ -191,10 +191,17 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
   const [sortDirection, setSortDirection] = useState('asc');
   const [draggedColumn, setDraggedColumn] = useState(null);
   const [columnOrder, setColumnOrder] = useState([]);
+  const [hiddenColumns, setHiddenColumns] = useState([]);
+  const [showColumnToggle, setShowColumnToggle] = useState(false);
+  const [columnWidths, setColumnWidths] = useState({});
+  const [isResizing, setIsResizing] = useState(false);
 
-  // Load saved column order on component mount
+  // Load saved column order, hidden columns, and column widths on component mount
   useEffect(() => {
     const savedOrder = localStorage.getItem(`columnOrder_${tableName}`);
+    const savedHidden = localStorage.getItem(`hiddenColumns_${tableName}`);
+    const savedWidths = localStorage.getItem(`columnWidths_${tableName}`);
+    
     if (savedOrder) {
       try {
         const parsedOrder = JSON.parse(savedOrder);
@@ -216,7 +223,44 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     } else {
       setColumnOrder(columns.map(col => col.key));
     }
+
+    if (savedHidden) {
+      try {
+        const parsedHidden = JSON.parse(savedHidden);
+        const columnKeys = columns.map(col => col.key);
+        // Only keep hidden columns that still exist
+        const validHidden = parsedHidden.filter(key => columnKeys.includes(key));
+        setHiddenColumns(validHidden);
+      } catch (error) {
+        console.warn('Failed to parse saved hidden columns:', error);
+        setHiddenColumns([]);
+      }
+    }
+
+    if (savedWidths) {
+      try {
+        const parsedWidths = JSON.parse(savedWidths);
+        setColumnWidths(parsedWidths);
+      } catch (error) {
+        console.warn('Failed to parse saved column widths:', error);
+        setColumnWidths({});
+      }
+    }
   }, [columns, tableName]);
+
+  // Close column toggle dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showColumnToggle && !event.target.closest('.relative')) {
+        setShowColumnToggle(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showColumnToggle]);
 
   // Save column order to localStorage
   const saveColumnOrder = (newOrder) => {
@@ -227,25 +271,55 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     }
   };
 
-  // Get ordered columns based on saved preference
+  // Save hidden columns to localStorage
+  const saveHiddenColumns = (hiddenCols) => {
+    try {
+      localStorage.setItem(`hiddenColumns_${tableName}`, JSON.stringify(hiddenCols));
+    } catch (error) {
+      console.warn('Failed to save hidden columns:', error);
+    }
+  };
+
+  // Save column widths to localStorage
+  const saveColumnWidths = (widths) => {
+    try {
+      localStorage.setItem(`columnWidths_${tableName}`, JSON.stringify(widths));
+    } catch (error) {
+      console.warn('Failed to save column widths:', error);
+    }
+  };
+
+  // Toggle column visibility
+  const toggleColumnVisibility = (columnKey) => {
+    const newHiddenColumns = hiddenColumns.includes(columnKey)
+      ? hiddenColumns.filter(key => key !== columnKey)
+      : [...hiddenColumns, columnKey];
+    
+    setHiddenColumns(newHiddenColumns);
+    saveHiddenColumns(newHiddenColumns);
+  };
+
+  // Get ordered and visible columns based on saved preferences
   const getOrderedColumns = () => {
-    if (columnOrder.length === 0) return columns;
+    if (columnOrder.length === 0) return columns.filter(col => !hiddenColumns.includes(col.key));
     
     const orderedColumns = [];
     const columnMap = new Map(columns.map(col => [col.key, col]));
     
-    // Add columns in saved order
+    // Add columns in saved order (excluding hidden ones)
     columnOrder.forEach(key => {
       const column = columnMap.get(key);
-      if (column) {
+      if (column && !hiddenColumns.includes(key)) {
         orderedColumns.push(column);
         columnMap.delete(key);
       }
     });
     
-    // Add any remaining columns (in case new columns were added)
+    // Add any remaining columns (in case new columns were added, excluding hidden ones)
     columnMap.forEach(column => {
-      orderedColumns.push(column);
+      if (!hiddenColumns.includes(column.key)) {
+        orderedColumns.push(column);
+      }
     });
     
     return orderedColumns;
@@ -290,6 +364,40 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     setColumnOrder(newOrder);
     saveColumnOrder(newOrder);
     setDraggedColumn(null);
+  };
+
+  // Handle column resize
+  const handleColumnResize = (columnKey, newWidth) => {
+    const newWidths = { ...columnWidths, [columnKey]: newWidth };
+    setColumnWidths(newWidths);
+    saveColumnWidths(newWidths);
+  };
+
+  // Column resize mouse handlers
+  const handleResizeMouseDown = (e, columnKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setIsResizing(true);
+    document.body.classList.add('resizing');
+    
+    const startX = e.clientX;
+    const startWidth = columnWidths[columnKey] || 150; // Default width
+    
+    const handleMouseMove = (e) => {
+      const newWidth = Math.max(50, startWidth + (e.clientX - startX)); // Minimum width of 50px
+      handleColumnResize(columnKey, newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.classList.remove('resizing');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   const handleSort = (columnKey) => {
@@ -925,7 +1033,7 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
             
             {/* Group Table */}
             <div className="overflow-x-auto">
-              <table className="min-w-full">
+              <table className="min-w-full table-resizable">
                 <thead className="bg-gray-50">
                   <tr>
                     {orderedColumns.map((col) => (
@@ -936,7 +1044,11 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                         onDragEnd={handleDragEnd}
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, col.key)}
-                        className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                        className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none relative ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                        style={{ 
+                          width: columnWidths[col.key] || col.width || 'auto',
+                          minWidth: '50px'
+                        }}
                         onClick={() => handleSort(col.key)}
                         title={`Sort by ${col.label}. Drag to reorder columns.`}
                       >
@@ -957,6 +1069,13 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                             </svg>
                           </div>
                         </div>
+                        
+                        {/* Column resize handle */}
+                        <div
+                          className="column-resize-handle"
+                          onMouseDown={(e) => handleResizeMouseDown(e, col.key)}
+                          title="Drag to resize column"
+                        />
                       </th>
                     ))}
                   </tr>
@@ -965,7 +1084,14 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                   {groupRecords.map((record, index) => (
                     <tr key={record.id || index} className="hover:bg-gray-50 transition-colors">
                       {orderedColumns.map((col) => (
-                        <td key={col.key} className={`px-4 py-3 text-sm ${col.width || ''}`}>
+                        <td 
+                          key={col.key} 
+                          className="px-4 py-3 text-sm"
+                          style={{ 
+                            width: columnWidths[col.key] || col.width || 'auto',
+                            minWidth: '50px'
+                          }}
+                        >
                           {getDisplayValue(record, col)}
                         </td>
                       ))}
@@ -1023,18 +1149,59 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
             );
           })()}
           Showing {filteredAndSortedRecords.length} of {records.length} records
+          {hiddenColumns.length > 0 && (
+            <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded-full text-xs font-medium ml-2">
+              {hiddenColumns.length} column{hiddenColumns.length !== 1 ? 's' : ''} hidden
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => onFiltersChange({})}
-          className="flex items-center gap-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
-        >
-          <X className="w-4 h-4" />
-          Clear All Filters
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <button
+              onClick={() => setShowColumnToggle(!showColumnToggle)}
+              className="flex items-center gap-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+            >
+              <ChevronDown className="w-4 h-4" />
+              Columns
+            </button>
+            {showColumnToggle && (
+              <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 w-64 max-h-80 overflow-hidden">
+                <div className="p-2 border-b border-gray-200 bg-gray-50">
+                  <span className="text-sm font-medium text-gray-700">Show/Hide Columns</span>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {columns.map((column) => (
+                    <label
+                      key={column.key}
+                      className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!hiddenColumns.includes(column.key)}
+                        onChange={() => toggleColumnVisibility(column.key)}
+                        className="mr-2 rounded"
+                      />
+                      <span className="flex-1 truncate" title={column.label}>
+                        {column.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => onFiltersChange({})}
+            className="flex items-center gap-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+          >
+            <X className="w-4 h-4" />
+            Clear All Filters
+          </button>
+        </div>
       </div>
       
       <div className="overflow-x-auto">
-        <table className="min-w-full">
+        <table className="min-w-full table-resizable">
         <thead className="bg-gray-50">
           <tr>
             {orderedColumns.map((col) => (
@@ -1045,7 +1212,11 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                 onDragEnd={handleDragEnd}
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, col.key)}
-                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100 transition-colors select-none relative ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                style={{ 
+                  width: columnWidths[col.key] || col.width || 'auto',
+                  minWidth: '50px'
+                }}
                 title={`Drag to reorder columns.`}
               >
                 <div className="flex items-center justify-between">
@@ -1087,6 +1258,13 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                     </div>
                   </div>
                 </div>
+                
+                {/* Column resize handle */}
+                <div
+                  className="column-resize-handle"
+                  onMouseDown={(e) => handleResizeMouseDown(e, col.key)}
+                  title="Drag to resize column"
+                />
               </th>
             ))}
           </tr>
@@ -1095,7 +1273,14 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
           {filteredAndSortedRecords.map((record, index) => (
             <tr key={record.id || index} className="hover:bg-gray-50 transition-colors">
               {orderedColumns.map((col) => (
-                <td key={col.key} className={`px-4 py-3 text-sm ${col.width || ''}`}>
+                <td 
+                  key={col.key} 
+                  className="px-4 py-3 text-sm"
+                  style={{ 
+                    width: columnWidths[col.key] || col.width || 'auto',
+                    minWidth: '50px'
+                  }}
+                >
                   {getDisplayValue(record, col)}
                 </td>
               ))}
@@ -1166,6 +1351,7 @@ const TABLE_CONFIG = {
       { key: 'priority', label: 'Priority', width: 'w-24' },
       { key: 'last_chat', label: 'Last Chat', width: 'w-32' },
       { key: 'contact_status', label: 'Status', width: 'w-24' },
+      { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
     orderBy: 'created_at',
     orderDirection: 'desc',
@@ -1183,6 +1369,7 @@ const TABLE_CONFIG = {
       { key: 'next_step', label: 'Next Step', width: 'w-48' },
       { key: 'next_step_due_date', label: 'Due Date', width: 'w-32' },
       { key: 'created_at', label: 'Created', width: 'w-32' },
+      { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
     orderBy: 'created_at',
     orderDirection: 'desc'
@@ -1197,6 +1384,7 @@ const TABLE_CONFIG = {
       { key: 'decision', label: 'Decision', width: 'w-32' },
       { key: 'confidence', label: 'Confidence', width: 'w-24' },
       { key: 'action_reason', label: 'Reason', width: 'w-96' },
+      { key: 'updated_at', label: 'Last Updated', width: 'w-32' },
     ],
     orderBy: 'created_at',
     orderDirection: 'desc',
@@ -1630,6 +1818,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             priority,
             last_chat,
             created_at,
+            updated_at,
             linkedin_url,
             linkedin_connection_status,
             companies!inner(name)
@@ -1656,7 +1845,8 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             priority,
             next_step,
             next_step_due_date,
-            created_at
+            created_at,
+            updated_at
           `);
         countQuery = supabaseService.supabase
           .from('activities')
@@ -1671,6 +1861,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             action_reason,
             email_from,
             created_at,
+            updated_at,
             contact_context
           `);
         countQuery = supabaseService.supabase

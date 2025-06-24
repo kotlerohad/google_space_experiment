@@ -136,4 +136,41 @@
 .welcome-container p {
   color: #64748b;
   font-size: 1.125rem;
+}
+
+/* Table column resize styles */
+.table-resizable {
+  table-layout: fixed;
+}
+
+.column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 0.2s;
+}
+
+.column-resize-handle:hover {
+  background-color: #3b82f6;
+  opacity: 0.7;
+}
+
+.column-resize-handle:active {
+  background-color: #1d4ed8;
+  opacity: 1;
+}
+
+/* Prevent text selection during resize */
+.resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.resizing * {
+  user-select: none;
+  cursor: col-resize !important;
 } 
