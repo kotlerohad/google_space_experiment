@@ -452,3 +452,107 @@ export const ConnectionStatusDropdown = ({ currentStatus, contactId, onUpdate, o
     </div>
   );
 };
+
+// Contact Status Dropdown Component - New for follow-up workflow
+export const ContactStatusDropdown = ({ currentStatus, contactId, onUpdate, onMessageLog }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const statusOptions = {
+    'followup': { label: 'Follow Up', color: 'bg-green-100 text-green-800' },
+    'wait': { label: 'Wait', color: 'bg-orange-100 text-orange-800' },
+    'giveup': { label: 'Give Up', color: 'bg-red-100 text-red-800' }
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.contact-status-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleStatusChange = async (newStatus) => {
+    if (newStatus === currentStatus) {
+      setIsOpen(false);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const statusText = newStatus ? statusOptions[newStatus].label : 'None';
+      onMessageLog?.(`Updating contact ${contactId} status to ${statusText}...`, 'info');
+      
+      const { error } = await supabaseService.supabase
+        .from('contacts')
+        .update({ contact_status: newStatus })
+        .eq('id', contactId);
+
+      if (error) throw error;
+
+      onMessageLog?.(`✓ Successfully updated contact status to ${statusText}`, 'success');
+      onUpdate?.(); // Refresh the data
+    } catch (error) {
+      console.error('Failed to update contact status:', error);
+      onMessageLog?.(`✗ Failed to update contact status: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
+      setIsOpen(false);
+    }
+  };
+
+  const currentOption = statusOptions[currentStatus] || { label: 'None', color: 'bg-gray-100 text-gray-800' };
+  const isNone = !currentStatus || !statusOptions[currentStatus];
+
+  return (
+    <div className="relative contact-status-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isUpdating}
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 ${
+          isNone 
+            ? 'bg-gray-50 text-gray-400 border border-dashed' 
+            : currentOption.color
+        } ${
+          isUpdating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'
+        }`}
+        title="Click to change contact status"
+      >
+        {isUpdating ? 'Updating...' : currentOption.label}
+        <span className="ml-1 text-xs">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 min-w-32">
+          <button
+            onClick={() => handleStatusChange(null)}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg ${
+              isNone ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+            }`}
+          >
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-gray-200"></span>
+            None
+          </button>
+          {Object.entries(statusOptions).map(([statusKey, option]) => (
+            <button
+              key={statusKey}
+              onClick={() => handleStatusChange(statusKey)}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 last:rounded-b-lg ${
+                statusKey === currentStatus ? 'bg-blue-50 text-blue-800 font-medium' : 'text-gray-700'
+              }`}
+            >
+              <span className={`inline-block w-3 h-3 rounded-full mr-2 ${option.color.replace('text-', 'bg-').replace('bg-', 'bg-').split(' ')[0]}`}></span>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};

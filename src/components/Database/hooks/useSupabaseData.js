@@ -42,7 +42,7 @@ export const useSupabaseData = (tableName, isConfigLoaded, onMessageLog, searchF
             comments,
             created_at,
             updated_at,
-            contacts(id, name, email)
+            contacts(id, name, email, contact_status)
           `);
         
         countQuery = supabaseService.supabase
@@ -139,7 +139,13 @@ export const useSupabaseData = (tableName, isConfigLoaded, onMessageLog, searchF
       if (tableName === 'companies') {
         transformedData = data.map(company => ({
           ...company,
-          contacts: company.contacts?.map(c => c.name).join(', ') || 'No contacts'
+          contacts: company.contacts?.map(c => c.name).join(', ') || 'No contacts',
+          contact_data: company.contacts?.map(c => ({
+            id: c.id,
+            name: c.name,
+            email: c.email,
+            status: c.contact_status
+          })) || []
         }));
       } else if (tableName === 'contacts') {
         transformedData = data.map(contact => ({

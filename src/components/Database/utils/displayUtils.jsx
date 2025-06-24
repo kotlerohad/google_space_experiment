@@ -5,7 +5,8 @@ import {
   CompanyTypeDropdown, 
   PriorityDropdown, 
   StatusDropdown, 
-  ConnectionStatusDropdown 
+  ConnectionStatusDropdown,
+  ContactStatusDropdown
 } from '../components/DropdownEditors';
 import { EditableTextField } from '../components/EditableTextField';
 import LastChatDatePicker from '../LastChatDatePicker';
@@ -51,6 +52,16 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
           onMessageLog={onMessageLog}
         />
       );
+    } else if (column.key === 'contact_status' && tableName === 'contacts') {
+      // For contact status, show the new contact status dropdown
+      return (
+        <ContactStatusDropdown
+          currentStatus={value}
+          contactId={record.id}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
     } else {
       // For other status fields, show static display
       const statusColors = {
@@ -63,12 +74,16 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
         'Qualified': 'bg-teal-100 text-teal-800',
         'Disqualified': 'bg-red-100 text-red-800',
         'Lost': 'bg-orange-100 text-orange-800',
-        'Proposal': 'bg-indigo-100 text-indigo-800'
+        'Proposal': 'bg-indigo-100 text-indigo-800',
+        // Add new contact statuses for static display
+        'followup': 'bg-green-100 text-green-800',
+        'wait': 'bg-orange-100 text-orange-800',
+        'giveup': 'bg-red-100 text-red-800'
       };
       const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
       return (
         <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-          {value}
+          {value || 'None'}
         </span>
       );
     }
@@ -189,11 +204,18 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
     );
   }
 
-  // Handle contacts column
+  // Handle contacts column - Display as colored pills based on status
   if (column.key === 'contacts' && value) {
     if (value === 'No contacts') {
       return <span className="text-gray-400 italic">{value}</span>;
     }
+    
+    // If we have structured contact data with status, render as pills
+    if (Array.isArray(record.contact_data)) {
+      return renderContactPills(record.contact_data);
+    }
+    
+    // Fallback to original text display for backward compatibility
     return (
       <div className="max-w-xs">
         <div className="text-sm text-gray-700" title={value}>
@@ -446,4 +468,35 @@ export const getDisplayValue = (record, column, tableName, groupByColumn, onUpda
   }
   
   return <span className="text-gray-900">{value.toString()}</span>;
+};
+
+// Helper function to get contact status color
+const getContactStatusColor = (status) => {
+  const statusColors = {
+    'followup': 'bg-green-100 text-green-800',
+    'wait': 'bg-orange-100 text-orange-800', 
+    'giveup': 'bg-red-100 text-red-800'
+  };
+  return statusColors[status] || 'bg-gray-100 text-gray-800';
+};
+
+// Helper function to render contacts as colored pills
+const renderContactPills = (contactsData) => {
+  if (!contactsData || contactsData.length === 0) {
+    return <span className="text-gray-400 italic">No contacts</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1 max-w-xs">
+      {contactsData.map((contact, index) => (
+        <span
+          key={index}
+          className={`px-2 py-1 rounded-full text-xs font-medium ${getContactStatusColor(contact.status)}`}
+          title={`${contact.name}${contact.email ? ` (${contact.email})` : ''} - Status: ${contact.status || 'None'}`}
+        >
+          {contact.name}
+        </span>
+      ))}
+    </div>
+  );
 };

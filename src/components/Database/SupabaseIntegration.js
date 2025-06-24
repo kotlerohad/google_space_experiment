@@ -2132,7 +2132,7 @@ const SupabaseIntegration = ({ onMessageLog }) => {
             comments,
             created_at,
             updated_at,
-            contacts(id, name, email)
+            contacts(id, name, email, contact_status)
           `);
         
         // Count query for pagination
@@ -2232,7 +2232,13 @@ const SupabaseIntegration = ({ onMessageLog }) => {
       if (tableName === 'companies') {
         transformedData = data.map(company => ({
           ...company,
-          contacts: company.contacts?.map(c => c.name).join(', ') || 'No contacts'
+          contacts: company.contacts?.map(c => c.name).join(', ') || 'No contacts',
+          contact_data: company.contacts?.map(c => ({
+            id: c.id,
+            name: c.name,
+            email: c.email,
+            status: c.contact_status
+          })) || []
         }));
       } else if (tableName === 'contacts') {
         transformedData = data.map(contact => ({
