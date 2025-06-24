@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import './App.css';
 import EmailList from './components/EmailTriage/EmailList';
-import SupabaseIntegration from './components/Database/SupabaseIntegration';
+import SupabaseIntegration from './components/Database/SupabaseIntegrationRefactored';
 import ApiConfig from './components/shared/ApiConfig';
 import LlmMonitoring from './components/LlmMonitoring';
 import { AppProvider, AppContext } from './AppContext';
