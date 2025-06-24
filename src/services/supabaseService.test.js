@@ -392,13 +392,19 @@ describe('SupabaseService', () => {
         }
       ];
 
-      supabaseService.supabase.from().update().match.mockResolvedValue({
-        error: null
+      // Mock the query chain with proper method calls
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null })
+      });
+      
+      supabaseService.supabase.from.mockReturnValue({
+        update: mockUpdate
       });
 
       await supabaseService.executeDbOperations(operations);
       
       expect(supabaseService.supabase.from).toHaveBeenCalledWith('companies');
+      expect(mockUpdate).toHaveBeenCalledWith({ name: 'Updated Company' });
     });
 
     it('should execute delete operations', async () => {
@@ -410,13 +416,19 @@ describe('SupabaseService', () => {
         }
       ];
 
-      supabaseService.supabase.from().delete().match.mockResolvedValue({
-        error: null
+      // Mock the query chain with proper method calls
+      const mockDelete = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null })
+      });
+      
+      supabaseService.supabase.from.mockReturnValue({
+        delete: mockDelete
       });
 
       await supabaseService.executeDbOperations(operations);
       
       expect(supabaseService.supabase.from).toHaveBeenCalledWith('companies');
+      expect(mockDelete).toHaveBeenCalled();
     });
 
     it('should handle foreign key constraint errors', async () => {

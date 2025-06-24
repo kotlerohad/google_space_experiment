@@ -28,7 +28,7 @@ DATABASE SCHEMA:
 - country (text)
 - status (text)
 - company_type_id (int, foreign key to company_types.id)
-- priority (int)
+- priority (int, nullable) - Values: 1=High, 2=Medium, 3=Low, null=No priority
 - number_of_employees (int)
 - number_of_developers (int)
 - potential_arr_eur (decimal)
@@ -41,7 +41,7 @@ DATABASE SCHEMA:
 - status (text)
 - description (text)
 - relationship_type_id (int, foreign key to relationship_types.id)
-- priority (int)
+- priority (int, nullable) - Values: 1=High, 2=Medium, 3=Low, null=No priority
 - last_contact_date (date)
 - next_step (text)
 - next_step_due_date (date)
@@ -100,6 +100,7 @@ DATABASE SCHEMA:
 - All tables have created_at timestamps
 - Foreign key relationships are enforced
 - Text fields can be NULL unless marked as required
+- Priority fields use integer values: 1=High, 2=Medium, 3=Low, null=No priority
 `;
   }
 
@@ -194,7 +195,9 @@ Each operation object must have these exact fields:
 - For lookups (e.g., finding a company_type_id for "Investor"), use a special "_name" suffix for the field (e.g., "company_type_name": "Investor"). The backend will handle the ID lookup.
 - For "UPDATE" or "DELETE", you must provide a "where" clause.
 - Always return an array of operation objects. If no operations can be determined, return an empty array.
-- Use "action" not "operation" as the field name.`;
+- Use "action" not "operation" as the field name.
+- For priority fields (priority column), use integer values: 1=High, 2=Medium, 3=Low, or null for empty/None. NEVER use string values like "None" or "High" for priority fields.
+- When setting priority to empty/None, use null, not the string "None".`;
 
     const payload = {
       model: this.model,

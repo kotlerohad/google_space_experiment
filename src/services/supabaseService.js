@@ -251,12 +251,18 @@ class SupabaseService {
     if (!this.supabase) throw new Error("Supabase client not initialized");
     if (!operations || operations.length === 0) return;
 
+    console.log('🔧 Executing database operations:', operations);
+
     for (const op of operations) {
       // Handle both 'action' and 'operation' field names for backward compatibility
       const action = op.action || op.operation;
       const table = op.table;
       const payload = op.payload || op.data; // Handle both 'payload' and 'data'
       const where = op.where;
+      
+      console.log(`📊 Processing ${action.toUpperCase()} operation on table '${table}':`);
+      console.log('  - Payload:', payload);
+      console.log('  - Where:', where);
       
       // Validate required fields
       if (!action || typeof action !== 'string') {
@@ -268,30 +274,42 @@ class SupabaseService {
       
       try {
         const resolvedPayload = payload ? await this._resolveLookups(payload) : {};
+        console.log('  - Resolved payload:', resolvedPayload);
 
         switch (action.toLowerCase()) {
           case 'insert':
-            const { error: insertError } = await this.supabase.from(table).insert(resolvedPayload);
+            console.log(`🔹 Executing INSERT into ${table}`);
+            const { data: insertData, error: insertError } = await this.supabase.from(table).insert(resolvedPayload);
             if (insertError) throw insertError;
+            console.log('✅ INSERT successful:', insertData);
             break;
 
           case 'update':
             if (!where) throw new Error('UPDATE operation requires a "where" clause.');
-            const { error: updateError } = await this.supabase.from(table).update(resolvedPayload).match(where);
+            console.log(`🔹 Executing UPDATE on ${table} with conditions:`, where);
+            let updateQuery = this.supabase.from(table).update(resolvedPayload, { count: 'exact' });
+            updateQuery = this._applyWhereClause(updateQuery, where);
+            const { data: updateData, error: updateError, count: updateCount } = await updateQuery;
             if (updateError) throw updateError;
+            console.log(`✅ UPDATE successful. Affected rows: ${updateCount || 'unknown'}`, updateData);
             break;
 
           case 'delete':
             if (!where) throw new Error('DELETE operation requires a "where" clause.');
-            const { error: deleteError } = await this.supabase.from(table).delete().match(where);
+            console.log(`🔹 Executing DELETE from ${table} with conditions:`, where);
+            let deleteQuery = this.supabase.from(table).delete({ count: 'exact' });
+            deleteQuery = this._applyWhereClause(deleteQuery, where);
+            const { data: deleteData, error: deleteError, count: deleteCount } = await deleteQuery;
             if (deleteError) throw deleteError;
+            console.log(`✅ DELETE successful. Affected rows: ${deleteCount || 'unknown'}`, deleteData);
             break;
 
           default:
             throw new Error(`Unsupported database operation: ${action}`);
         }
       } catch (error) {
-        console.error(`Failed to execute operation: ${JSON.stringify(op)}`, error);
+        console.error(`❌ Failed to execute operation on ${table}:`, error);
+        console.error(`   Operation details:`, op);
         
         // Provide better error messages for common issues
         if (error.code === '23503') {
@@ -312,6 +330,27 @@ class SupabaseService {
         }
       }
     }
+    
+    console.log('🎉 All database operations completed successfully!');
+  }
+
+  /**
+   * Applies where conditions to a Supabase query, handling null values correctly.
+   * @param {object} query - The Supabase query object
+   * @param {object} where - The where conditions
+   * @returns {object} - The query with where conditions applied
+   */
+  _applyWhereClause(query, where) {
+    for (const [key, value] of Object.entries(where)) {
+      if (value === null) {
+        // Use .is() for null comparisons
+        query = query.is(key, null);
+      } else {
+        // Use .eq() for non-null comparisons
+        query = query.eq(key, value);
+      }
+    }
+    return query;
   }
 }
 
