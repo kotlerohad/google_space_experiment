@@ -562,6 +562,125 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
   const getDisplayValue = (record, column) => {
     const value = record[column.key];
     
+    // Handle comments field FIRST (before null check) so it's always editable
+    if (column.key === 'comments') {
+      return (
+        <EditableTextField
+          currentValue={value}
+          recordId={record.id}
+          tableName={tableName}
+          fieldName="comments"
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+          placeholder={tableName === 'companies' ? "Add company notes..." : "Add contact notes..."}
+        />
+      );
+    }
+
+    // Handle priority fields with dropdown for companies (before null check)
+    if (column.key === 'priority' && tableName === 'companies') {
+      // In grouped view, don't show dropdown for the grouping column
+      if (groupByColumn === 'priority') {
+        if (value === null || value === undefined) {
+          return <span className="text-gray-400 italic">—</span>;
+        }
+        const priorityColors = {
+          0: 'bg-purple-100 text-purple-800',   // Top
+          1: 'bg-red-100 text-red-800',        // High
+          2: 'bg-yellow-100 text-yellow-800',  // Medium
+          3: 'bg-green-100 text-green-800'     // Low
+        };
+        const priorityLabels = {
+          0: 'Top',
+          1: 'High',
+          2: 'Medium', 
+          3: 'Low'
+        };
+        const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+        const label = priorityLabels[value] || value;
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+            {label}
+          </span>
+        );
+      }
+      
+      return (
+        <PriorityDropdown
+          currentPriority={value}
+          companyId={record.id}
+          companyTypeId={record.company_type_id}
+          country={record.country}
+          onUpdate={onUpdate}
+          onMessageLog={onMessageLog}
+        />
+      );
+    }
+
+    // Handle status fields (before null check for company status dropdown)
+    if (column.key.includes('status')) {
+      if (column.key === 'status' && tableName === 'companies') {
+        // For companies status, show dropdown even if null
+        return (
+          <StatusDropdown
+            currentStatus={value}
+            companyId={record.id}
+            onUpdate={onUpdate}
+            onMessageLog={onMessageLog}
+          />
+        );
+      } else {
+        // For other status fields, show static display (only if not null)
+        if (value === null || value === undefined) {
+          return <span className="text-gray-400 italic">—</span>;
+        }
+        const statusColors = {
+          'Active': 'bg-green-100 text-green-800',
+          'Inactive': 'bg-gray-100 text-gray-800',
+          'Pending': 'bg-yellow-100 text-yellow-800',
+          'Completed': 'bg-blue-100 text-blue-800',
+          'Prospect': 'bg-blue-100 text-blue-800',
+          'Lead': 'bg-purple-100 text-purple-800',
+          'Qualified': 'bg-teal-100 text-teal-800',
+          'Disqualified': 'bg-red-100 text-red-800',
+          'Lost': 'bg-orange-100 text-orange-800',
+          'Proposal': 'bg-indigo-100 text-indigo-800'
+        };
+        const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+            {value}
+          </span>
+        );
+      }
+    }
+    
+    // Handle priority for other tables (static display)
+    if (column.key === 'priority' && tableName !== 'companies') {
+      if (value === null || value === undefined) {
+        return <span className="text-gray-400 italic">—</span>;
+      }
+      const priorityColors = {
+        0: 'bg-purple-100 text-purple-800',   // Top
+        1: 'bg-red-100 text-red-800',        // High
+        2: 'bg-yellow-100 text-yellow-800',  // Medium
+        3: 'bg-green-100 text-green-800'     // Low
+      };
+      const priorityLabels = {
+        0: 'Top',
+        1: 'High',
+        2: 'Medium', 
+        3: 'Low'
+      };
+      const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
+      const label = priorityLabels[value] || value;
+      return (
+        <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
+          {label}
+        </span>
+      );
+    }
+    
     if (value === null || value === undefined) {
       return <span className="text-gray-400 italic">—</span>;
     }
@@ -585,41 +704,6 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
         );
       } catch {
         return value;
-      }
-    }
-    
-    // Handle status fields
-    if (column.key.includes('status')) {
-      if (column.key === 'status' && tableName === 'companies') {
-        // For companies status, show dropdown
-        return (
-          <StatusDropdown
-            currentStatus={value}
-            companyId={record.id}
-            onUpdate={onUpdate}
-            onMessageLog={onMessageLog}
-          />
-        );
-      } else {
-        // For other status fields, show static display
-        const statusColors = {
-          'Active': 'bg-green-100 text-green-800',
-          'Inactive': 'bg-gray-100 text-gray-800',
-          'Pending': 'bg-yellow-100 text-yellow-800',
-          'Completed': 'bg-blue-100 text-blue-800',
-          'Prospect': 'bg-blue-100 text-blue-800',
-          'Lead': 'bg-purple-100 text-purple-800',
-          'Qualified': 'bg-teal-100 text-teal-800',
-          'Disqualified': 'bg-red-100 text-red-800',
-          'Lost': 'bg-orange-100 text-orange-800',
-          'Proposal': 'bg-indigo-100 text-indigo-800'
-        };
-        const colorClass = statusColors[value] || 'bg-gray-100 text-gray-800';
-        return (
-          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-            {value}
-          </span>
-        );
       }
     }
     
@@ -817,21 +901,6 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       }
     }
     
-    // Handle comments field
-    if (column.key === 'comments') {
-      return (
-        <EditableTextField
-          currentValue={value}
-          recordId={record.id}
-          tableName={tableName}
-          fieldName="comments"
-          onUpdate={onUpdate}
-          onMessageLog={onMessageLog}
-          placeholder={tableName === 'companies' ? "Add company notes..." : "Add contact notes..."}
-        />
-      );
-    }
-    
     // Handle long text (summary, etc.)
     if (typeof value === 'string' && value.length > 100) {
       return (
@@ -847,70 +916,6 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       return <pre className="text-xs bg-gray-100 p-1 rounded max-w-xs overflow-hidden">{JSON.stringify(value, null, 2)}</pre>;
     }
     
-    // Handle priority fields with dropdown for companies
-    if (column.key === 'priority') {
-      if (tableName === 'companies') {
-        // In grouped view, don't show dropdown for the grouping column
-        if (groupByColumn === 'priority') {
-          if (value === null || value === undefined) {
-            return <span className="text-gray-400 italic">—</span>;
-          }
-          const priorityColors = {
-            1: 'bg-red-100 text-red-800',    // High
-            2: 'bg-yellow-100 text-yellow-800', // Medium
-            3: 'bg-green-100 text-green-800'    // Low
-          };
-          const priorityLabels = {
-            1: 'High',
-            2: 'Medium', 
-            3: 'Low'
-          };
-          const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
-          const label = priorityLabels[value] || value;
-          return (
-            <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-              {label}
-            </span>
-          );
-        }
-        
-        return (
-          <PriorityDropdown
-            currentPriority={value}
-            companyId={record.id}
-            companyTypeId={record.company_type_id}
-            country={record.country}
-            onUpdate={onUpdate}
-            onMessageLog={onMessageLog}
-          />
-        );
-      } else {
-        // For other tables, show static priority
-        if (value === null || value === undefined) {
-          return <span className="text-gray-400 italic">—</span>;
-        }
-        const priorityColors = {
-          0: 'bg-purple-100 text-purple-800',   // Top
-          1: 'bg-red-100 text-red-800',        // High
-          2: 'bg-yellow-100 text-yellow-800',  // Medium
-          3: 'bg-green-100 text-green-800'     // Low
-        };
-        const priorityLabels = {
-          0: 'Top',
-          1: 'High',
-          2: 'Medium', 
-          3: 'Low'
-        };
-        const colorClass = priorityColors[value] || 'bg-gray-100 text-gray-800';
-        const label = priorityLabels[value] || value;
-        return (
-          <span className={`px-2 py-1 rounded-full text-xs ${colorClass}`}>
-            {label}
-          </span>
-        );
-      }
-    }
-
     // Handle source fields
     if (column.key === 'source') {
       if (value === null || value === undefined) {

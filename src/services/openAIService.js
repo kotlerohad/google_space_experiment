@@ -317,6 +317,22 @@ Each operation object must have these exact fields:
 - For priority fields (priority column), use integer values: 1=High, 2=Medium, 3=Low, or null for empty/None. NEVER use string values like "None" or "High" for priority fields.
 - When setting priority to empty/None, use null, not the string "None".
 
+### VALID COMPANY TYPES (use EXACTLY these names):
+- "Other" - for miscellaneous companies
+- "Customer (Bank)" - for banking customers
+- "Channel Partner" - for partnership companies
+- "Customer (NeoBank)" - for neobank customers
+- "Investor" - for investment companies
+- "Customer (Software provider)" - for software companies that are customers
+- "Customer (Payments)" - for payment companies that are customers
+
+IMPORTANT: When users mention terms like "software provider", "technology", "tech", "software company", use "Customer (Software provider)".
+When they mention "bank", "banking", use "Customer (Bank)".
+When they mention "fintech", "payments", "payment processor", use "Customer (Payments)".
+When they mention "investor", "VC", "venture capital", use "Investor".
+When they mention "partner", "partnership", use "Channel Partner".
+If unsure, use "Other".
+
 ### Email Address Processing Rules
 - When the user provides an email address (e.g., "Rebecca.Li@aexp.com"), extract the name from the email prefix
 - Use the company research to create a company record first, then link the contact to that company
