@@ -1,101 +1,191 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { AppContext } from '../../AppContext';
 import supabaseService from '../../services/supabaseService';
-import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X } from 'lucide-react';
+import { RefreshCw, Building2, Users, Activity, FileText, Search, Filter, X, ChevronDown } from 'lucide-react';
 import { CleanupIcon } from '../shared/Icons';
 import AICommandInput from './AICommandInput';
 import CleanupSuggestions from './CleanupSuggestions';
 import LastChatDatePicker from './LastChatDatePicker';
 import { emailAnalysisService } from '../../services/emailAnalysisService';
 
-// Column Filters Component
-const ColumnFilters = ({ columns, filters, onFiltersChange, onClear }) => {
-  const handleFilterChange = (columnKey, value) => {
+// Google Sheets-style Column Filter Dropdown Component
+const ColumnFilterDropdown = ({ column, records, filters, onFiltersChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const columnKey = column.key;
+  const activeFilters = filters[columnKey] || [];
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isOpen && !event.target.closest('.column-filter-dropdown')) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // Get unique values for this column
+  const getUniqueValues = () => {
+    const values = new Set();
+    records.forEach(record => {
+      let value = record[columnKey];
+      
+      // Handle null/undefined values
+      if (value === null || value === undefined) {
+        values.add('(Empty)');
+        return;
+      }
+
+      // Handle different data types
+      if (typeof value === 'boolean') {
+        values.add(value ? 'Yes' : 'No');
+      } else if (columnKey.includes('_at') || columnKey === 'timestamp') {
+        // For dates, show just the date part
+        try {
+          const date = new Date(value);
+          values.add(date.toLocaleDateString());
+        } catch {
+          values.add(String(value));
+        }
+      } else if (columnKey === 'company_type_id') {
+        // Handle company type IDs with their labels
+        const companyTypes = {
+          1: 'Other',
+          2: 'Customer (Bank)',
+          3: 'Channel Partner',
+          4: 'Customer (NeoBank)',
+          5: 'Investor',
+          6: 'Customer (Software provider)',
+          7: 'Customer (Payments)'
+        };
+        values.add(companyTypes[value] || `Type #${value}`);
+      } else {
+        values.add(String(value));
+      }
+    });
+
+    // Convert to array and sort
+    return Array.from(values).sort((a, b) => {
+      // Put (Empty) at the top
+      if (a === '(Empty)') return -1;
+      if (b === '(Empty)') return 1;
+      return a.localeCompare(b);
+    });
+  };
+
+  const uniqueValues = getUniqueValues();
+  const hasActiveFilters = activeFilters.length > 0;
+
+  const handleValueToggle = (value) => {
     const newFilters = { ...filters };
-    if (value.trim() === '') {
-      delete newFilters[columnKey];
+    const currentFilters = newFilters[columnKey] || [];
+    
+    if (currentFilters.includes(value)) {
+      // Remove the value
+      const updatedFilters = currentFilters.filter(f => f !== value);
+      if (updatedFilters.length === 0) {
+        delete newFilters[columnKey];
+      } else {
+        newFilters[columnKey] = updatedFilters;
+      }
     } else {
-      newFilters[columnKey] = value;
+      // Add the value
+      newFilters[columnKey] = [...currentFilters, value];
     }
+    
     onFiltersChange(newFilters);
   };
 
-  const getFilterType = (column) => {
-    if (column.key.includes('_at') || column.key === 'timestamp') return 'date';
-    if (column.key === 'priority' || column.key === 'confidence') return 'number';
-    if (column.key === 'company_type_id') return 'select';
-    return 'text';
+  const handleSelectAll = () => {
+    const newFilters = { ...filters };
+    delete newFilters[columnKey]; // Remove all filters for this column
+    onFiltersChange(newFilters);
   };
 
-  const getSelectOptions = (column) => {
-    if (column.key === 'company_type_id') {
-      return [
-        { value: '1', label: 'Other' },
-        { value: '2', label: 'Customer (Bank)' },
-        { value: '3', label: 'Channel Partner' },
-        { value: '4', label: 'Customer (NeoBank)' },
-        { value: '5', label: 'Investor' },
-        { value: '6', label: 'Customer (Software provider)' },
-        { value: '7', label: 'Customer (Payments)' }
-      ];
-    }
-    return [];
+  const handleSelectNone = () => {
+    const newFilters = { ...filters };
+    newFilters[columnKey] = []; // Set to empty array (shows nothing)
+    onFiltersChange(newFilters);
   };
 
   return (
-    <div className="bg-gray-50 border-t border-gray-200 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h4 className="text-sm font-medium text-gray-700 flex items-center gap-2">
-          <Filter className="w-4 h-4" />
-          Column Filters
-        </h4>
-        <button
-          onClick={onClear}
-          className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-        >
-          <X className="w-3 h-3" />
-          Clear All
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {columns.map(column => {
-          const filterType = getFilterType(column);
-          const value = filters[column.key] || '';
-          
-          return (
-            <div key={column.key} className="space-y-1">
-              <label className="text-xs font-medium text-gray-600">{column.label}</label>
-              {filterType === 'select' ? (
-                <select
-                  value={value}
-                  onChange={(e) => handleFilterChange(column.key, e.target.value)}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">All</option>
-                  {getSelectOptions(column).map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type={filterType}
-                  value={value}
-                  onChange={(e) => handleFilterChange(column.key, e.target.value)}
-                  placeholder={`Filter ${column.label.toLowerCase()}...`}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              )}
+    <div className="relative column-filter-dropdown">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`p-1 rounded hover:bg-gray-200 transition-colors ${
+          hasActiveFilters ? 'text-blue-600' : 'text-gray-400'
+        }`}
+        title={`Filter ${column.label}`}
+      >
+        <Filter className="w-3 h-3" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 w-64 max-h-80 overflow-hidden">
+          <div className="p-2 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700">Filter {column.label}</span>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          );
-        })}
-      </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSelectAll}
+                className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+              >
+                All
+              </button>
+              <button
+                onClick={handleSelectNone}
+                className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              >
+                None
+              </button>
+            </div>
+          </div>
+          
+          <div className="max-h-64 overflow-y-auto">
+            {uniqueValues.map((value, index) => {
+              const isSelected = activeFilters.length === 0 || activeFilters.includes(value);
+              return (
+                <label
+                  key={index}
+                  className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => handleValueToggle(value)}
+                    className="mr-2 rounded"
+                  />
+                  <span className="flex-1 truncate" title={value}>
+                    {value}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          
+          {uniqueValues.length === 0 && (
+            <div className="p-4 text-center text-gray-500 text-sm">
+              No values found
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
-const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNextPage, totalRecords, onLoadMore, onMessageLog, onUpdate, groupByColumn, columnFilters, onFiltersChange, showFilters, onToggleFilters }) => {
+const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNextPage, totalRecords, onLoadMore, onMessageLog, onUpdate, groupByColumn, columnFilters, onFiltersChange }) => {
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc');
   const [draggedColumn, setDraggedColumn] = useState(null);
@@ -218,8 +308,48 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
     if (columnFilters && Object.keys(columnFilters).length > 0) {
       filtered = records.filter(record => {
         return Object.entries(columnFilters).every(([columnKey, filterValue]) => {
+          // Skip empty filters
           if (!filterValue) return true;
           
+          // Handle array-based filters (new Google Sheets style)
+          if (Array.isArray(filterValue)) {
+            // If empty array, show nothing
+            if (filterValue.length === 0) return false;
+            
+            const recordValue = record[columnKey];
+            let displayValue;
+            
+            // Convert record value to display value (same logic as in ColumnFilterDropdown)
+            if (recordValue === null || recordValue === undefined) {
+              displayValue = '(Empty)';
+            } else if (typeof recordValue === 'boolean') {
+              displayValue = recordValue ? 'Yes' : 'No';
+            } else if (columnKey.includes('_at') || columnKey === 'timestamp') {
+              try {
+                const date = new Date(recordValue);
+                displayValue = date.toLocaleDateString();
+              } catch {
+                displayValue = String(recordValue);
+              }
+            } else if (columnKey === 'company_type_id') {
+              const companyTypes = {
+                1: 'Other',
+                2: 'Customer (Bank)',
+                3: 'Channel Partner',
+                4: 'Customer (NeoBank)',
+                5: 'Investor',
+                6: 'Customer (Software provider)',
+                7: 'Customer (Payments)'
+              };
+              displayValue = companyTypes[recordValue] || `Type #${recordValue}`;
+            } else {
+              displayValue = String(recordValue);
+            }
+            
+            return filterValue.includes(displayValue);
+          }
+          
+          // Handle legacy string-based filters (for backward compatibility)
           const recordValue = record[columnKey];
           if (recordValue === null || recordValue === undefined) return false;
           
@@ -845,31 +975,30 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
       {/* Filter Toggle Button */}
       <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          {Object.keys(columnFilters).length > 0 && (
-            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium mr-2">
-              {Object.keys(columnFilters).length} filter{Object.keys(columnFilters).length !== 1 ? 's' : ''} active
-            </span>
-          )}
+          {(() => {
+            const activeFilterCount = Object.entries(columnFilters).filter(([key, value]) => {
+              if (Array.isArray(value)) {
+                return value.length > 0;
+              }
+              return value && value.trim() !== '';
+            }).length;
+            
+            return activeFilterCount > 0 && (
+              <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium mr-2">
+                {activeFilterCount} filter{activeFilterCount !== 1 ? 's' : ''} active
+              </span>
+            );
+          })()}
           Showing {filteredAndSortedRecords.length} of {records.length} records
         </div>
         <button
-          onClick={onToggleFilters}
+          onClick={() => onFiltersChange({})}
           className="flex items-center gap-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
         >
-          <Filter className="w-4 h-4" />
-          {showFilters ? 'Hide Filters' : 'Show Filters'}
+          <X className="w-4 h-4" />
+          Clear All Filters
         </button>
       </div>
-      
-      {/* Column Filters */}
-      {showFilters && (
-        <ColumnFilters
-          columns={columns}
-          filters={columnFilters}
-          onFiltersChange={onFiltersChange}
-          onClear={() => onFiltersChange({})}
-        />
-      )}
       
       <div className="overflow-x-auto">
         <table className="min-w-full">
@@ -883,30 +1012,46 @@ const DataTable = ({ records, columns, isLoading, tableName, currentPage, hasNex
                 onDragEnd={handleDragEnd}
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, col.key)}
-                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
-                onClick={() => handleSort(col.key)}
-                title={`Sort by ${col.label}. Drag to reorder columns.`}
+                className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100 transition-colors select-none ${col.width || ''} ${draggedColumn === col.key ? 'opacity-50' : ''}`}
+                title={`Drag to reorder columns.`}
               >
-                <div className="flex items-center space-x-1">
-                  <span>{col.label}</span>
-                  {sortColumn === col.key && (
-                    <span className="text-blue-500">
-                      {sortDirection === 'asc' ? '↑' : '↓'}
-                    </span>
-                  )}
-                  {sortColumn !== col.key && (
-                    <span className="text-gray-300 opacity-0 group-hover:opacity-100">
-                      ↑↓
-                    </span>
-                  )}
-                  {/* Drag indicator */}
-                  <div className="opacity-30 hover:opacity-60 transition-opacity ml-1">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                      <circle cx="3" cy="3" r="1"/>
-                      <circle cx="9" cy="3" r="1"/>
-                      <circle cx="3" cy="9" r="1"/>
-                      <circle cx="9" cy="9" r="1"/>
-                    </svg>
+                <div className="flex items-center justify-between">
+                  <div 
+                    className="flex items-center space-x-1 cursor-pointer flex-1"
+                    onClick={() => handleSort(col.key)}
+                    title={`Sort by ${col.label}`}
+                  >
+                    <span>{col.label}</span>
+                    {sortColumn === col.key && (
+                      <span className="text-blue-500">
+                        {sortDirection === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                    {sortColumn !== col.key && (
+                      <span className="text-gray-300 opacity-0 group-hover:opacity-100">
+                        ↑↓
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center space-x-1">
+                    {/* Filter dropdown */}
+                    <ColumnFilterDropdown
+                      column={col}
+                      records={records}
+                      filters={columnFilters}
+                      onFiltersChange={onFiltersChange}
+                    />
+                    
+                    {/* Drag indicator */}
+                    <div className="opacity-30 hover:opacity-60 transition-opacity cursor-move">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                        <circle cx="3" cy="3" r="1"/>
+                        <circle cx="9" cy="3" r="1"/>
+                        <circle cx="3" cy="9" r="1"/>
+                        <circle cx="9" cy="9" r="1"/>
+                      </svg>
+                    </div>
                   </div>
                 </div>
               </th>
@@ -1296,7 +1441,6 @@ const SupabaseIntegration = ({ onMessageLog }) => {
   const [groupByColumn, setGroupByColumn] = useState(null);
   const [isFindingLastChat, setIsFindingLastChat] = useState(false);
   const [columnFilters, setColumnFilters] = useState({});
-  const [showFilters, setShowFilters] = useState(false);
 
   // Handle navigation to contact
   useEffect(() => {
@@ -1792,8 +1936,6 @@ const SupabaseIntegration = ({ onMessageLog }) => {
         groupByColumn={groupByColumn}
         columnFilters={columnFilters}
         onFiltersChange={setColumnFilters}
-        showFilters={showFilters}
-        onToggleFilters={() => setShowFilters(!showFilters)}
       />
       
       {/* Cleanup Suggestions */}
