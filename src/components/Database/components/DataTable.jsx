@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronDown, X } from 'lucide-react';
+import { ChevronDown, X, GripVertical } from 'lucide-react';
 import { ColumnFilterDropdown } from './ColumnFilterDropdown';
 import { getDisplayValue } from '../utils/displayUtils';
+import supabaseService from '../../../services/supabaseService';
 
 export const DataTable = ({ 
   records, 
@@ -25,6 +26,11 @@ export const DataTable = ({
   const [hiddenColumns, setHiddenColumns] = useState([]);
   const [showColumnToggle, setShowColumnToggle] = useState(false);
   const [columnWidths, setColumnWidths] = useState({});
+  
+  // Group ordering state
+  const [groupOrdering, setGroupOrdering] = useState({});
+  const [draggedGroup, setDraggedGroup] = useState(null);
+  const [isLoadingGroupOrder, setIsLoadingGroupOrder] = useState(false);
 
   // Load saved column order, hidden columns, and column widths on component mount
   useEffect(() => {
@@ -77,6 +83,44 @@ export const DataTable = ({
       }
     }
   }, [columns, tableName]);
+
+  // Load group ordering when groupByColumn changes
+  useEffect(() => {
+    if (groupByColumn && supabaseService.isConnected()) {
+      loadGroupOrdering();
+    } else {
+      setGroupOrdering({});
+    }
+  }, [groupByColumn, tableName]);
+
+  // Load group ordering from database
+  const loadGroupOrdering = async () => {
+    if (!groupByColumn || !supabaseService.isConnected()) return;
+    
+    setIsLoadingGroupOrder(true);
+    try {
+      const ordering = await supabaseService.getGroupOrdering(tableName, groupByColumn);
+      setGroupOrdering(ordering);
+    } catch (error) {
+      console.error('Failed to load group ordering:', error);
+      setGroupOrdering({});
+    } finally {
+      setIsLoadingGroupOrder(false);
+    }
+  };
+
+  // Save group ordering to database
+  const saveGroupOrdering = async (orderedGroups) => {
+    if (!groupByColumn || !supabaseService.isConnected()) return;
+    
+    try {
+      await supabaseService.saveGroupOrdering(tableName, groupByColumn, orderedGroups);
+      onMessageLog?.(`✅ Group order saved successfully`, 'success');
+    } catch (error) {
+      console.error('Failed to save group ordering:', error);
+      onMessageLog?.(`❌ Failed to save group order: ${error.message}`, 'error');
+    }
+  };
 
   // Close column toggle dropdown when clicking outside
   useEffect(() => {
@@ -232,6 +276,60 @@ export const DataTable = ({
       setSortColumn(columnKey);
       setSortDirection('asc');
     }
+  };
+
+  // Group drag and drop handlers
+  const handleGroupDragStart = (e, groupValue) => {
+    setDraggedGroup(groupValue);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', groupValue);
+  };
+
+  const handleGroupDragEnd = (e) => {
+    setDraggedGroup(null);
+  };
+
+  const handleGroupDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleGroupDrop = async (e, targetGroupValue) => {
+    e.preventDefault();
+    
+    if (!draggedGroup || draggedGroup === targetGroupValue) {
+      return;
+    }
+
+    // Get current group order
+    const groupEntries = Object.entries(getGroupedRecords() || {});
+    const currentOrder = groupEntries.map(([groupValue]) => groupValue);
+    
+    // Apply saved ordering to current order
+    const orderedGroups = getOrderedGroups(currentOrder);
+    
+    // Find indices
+    const draggedIndex = orderedGroups.indexOf(draggedGroup);
+    const targetIndex = orderedGroups.indexOf(targetGroupValue);
+    
+    if (draggedIndex === -1 || targetIndex === -1) return;
+    
+    // Reorder groups
+    const newOrder = [...orderedGroups];
+    newOrder.splice(draggedIndex, 1);
+    newOrder.splice(targetIndex, 0, draggedGroup);
+    
+    // Create new ordering object
+    const newOrdering = {};
+    newOrder.forEach((groupValue, index) => {
+      newOrdering[groupValue] = index + 1;
+    });
+    
+    // Update state and save to database
+    setGroupOrdering(newOrdering);
+    await saveGroupOrdering(newOrder);
+    
+    setDraggedGroup(null);
   };
 
   // Apply filters first, then sort
@@ -405,6 +503,20 @@ export const DataTable = ({
     return groups;
   };
 
+  // Get groups in the correct order based on saved ordering
+  const getOrderedGroups = (groupValues) => {
+    if (!groupOrdering || Object.keys(groupOrdering).length === 0) {
+      return groupValues; // Return original order if no custom ordering
+    }
+    
+    // Sort groups based on saved ordering
+    return [...groupValues].sort((a, b) => {
+      const orderA = groupOrdering[a] || 999; // Groups not in ordering go to end
+      const orderB = groupOrdering[b] || 999;
+      return orderA - orderB;
+    });
+  };
+
   const groupedRecords = getGroupedRecords();
   const orderedColumns = getOrderedColumns();
 
@@ -427,25 +539,47 @@ export const DataTable = ({
   }
 
   if (groupedRecords) {
+    // Get ordered group entries
+    const groupEntries = Object.entries(groupedRecords);
+    const groupValues = groupEntries.map(([groupValue]) => groupValue);
+    const orderedGroupValues = getOrderedGroups(groupValues);
+    const orderedGroupEntries = orderedGroupValues.map(groupValue => [groupValue, groupedRecords[groupValue]]);
+    
     // Render grouped tables
     return (
       <div className="space-y-6">
-        {Object.entries(groupedRecords).map(([groupValue, groupRecords]) => (
+        {orderedGroupEntries.map(([groupValue, groupRecords]) => (
           <div key={groupValue} className="bg-white rounded-lg border border-gray-200">
             {/* Group Header */}
-            <div className="bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 border-b border-gray-200 rounded-t-lg">
+            <div 
+              className={`bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-3 border-b border-gray-200 rounded-t-lg cursor-move ${draggedGroup === groupValue ? 'opacity-50' : ''}`}
+              draggable
+              onDragStart={(e) => handleGroupDragStart(e, groupValue)}
+              onDragEnd={handleGroupDragEnd}
+              onDragOver={handleGroupDragOver}
+              onDrop={(e) => handleGroupDrop(e, groupValue)}
+              title="Drag to reorder groups"
+            >
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {groupByColumn && (
-                    <span className="text-sm font-medium text-gray-600 uppercase tracking-wider mr-2">
-                      {columns.find(col => col.key === groupByColumn)?.label}:
-                    </span>
+                <div className="flex items-center">
+                  <GripVertical className="w-4 h-4 text-gray-400 mr-2 flex-shrink-0" />
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {groupByColumn && (
+                      <span className="text-sm font-medium text-gray-600 uppercase tracking-wider mr-2">
+                        {columns.find(col => col.key === groupByColumn)?.label}:
+                      </span>
+                    )}
+                    <span className="text-blue-800">{groupValue}</span>
+                  </h3>
+                </div>
+                <div className="flex items-center space-x-2">
+                  {isLoadingGroupOrder && (
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600" />
                   )}
-                  <span className="text-blue-800">{groupValue}</span>
-                </h3>
-                <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                  {groupRecords.length} {groupRecords.length === 1 ? 'record' : 'records'}
-                </span>
+                  <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                    {groupRecords.length} {groupRecords.length === 1 ? 'record' : 'records'}
+                  </span>
+                </div>
               </div>
             </div>
             
@@ -526,7 +660,7 @@ export const DataTable = ({
           <div className="bg-gray-50 px-4 py-2 text-center text-sm text-gray-600 rounded-lg border border-gray-200">
             <div className="flex justify-center items-center space-x-4">
               <span>
-                Total: {records.length} records in {Object.keys(groupedRecords).length} groups
+                Total: {records.length} records in {orderedGroupEntries.length} groups
               </span>
               {hasNextPage && (
                 <button
@@ -537,8 +671,23 @@ export const DataTable = ({
                 </button>
               )}
             </div>
-            <div className="mt-1 text-xs text-gray-500">
-              Grouped by {columns.find(col => col.key === groupByColumn)?.label}
+            <div className="mt-1 flex justify-center items-center space-x-4">
+              <span className="text-xs text-gray-500">
+                Grouped by {columns.find(col => col.key === groupByColumn)?.label} • Drag groups to reorder
+              </span>
+              {Object.keys(groupOrdering).length > 0 && (
+                <button
+                  onClick={async () => {
+                    await supabaseService.clearGroupOrdering(tableName, groupByColumn);
+                    setGroupOrdering({});
+                    onMessageLog?.('✅ Group order reset to default', 'success');
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                  title="Reset group order to default"
+                >
+                  Reset Order
+                </button>
+              )}
             </div>
           </div>
         )}
